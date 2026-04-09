@@ -8,7 +8,6 @@ COPY prisma ./prisma
 RUN npm install
 
 FROM base AS builder
-ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
@@ -17,12 +16,14 @@ FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
-ENV HOSTNAME=0.0.0.0
 
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/prisma ./prisma
+COPY --from=deps /app/node_modules ./node_modules
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/package.json ./package.json
 
 EXPOSE 8080
-CMD ["sh", "-c", "./node_modules/.bin/prisma migrate deploy && node .next/standalone/server.js"]
+
+CMD ["sh", "-c", "./node_modules/.bin/prisma migrate deploy && node server.js"]
