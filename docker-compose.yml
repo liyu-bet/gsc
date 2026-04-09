@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: gsc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gsc_dashboard
+      POSTGRES_USER: gsc
+      POSTGRES_PASSWORD: gscpassword
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gsc -d gsc_dashboard"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    container_name: gsc-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
