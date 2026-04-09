@@ -26,4 +26,4 @@ COPY --from=builder /app/package.json ./package.json
 
 EXPOSE 8080
 
-CMD ["sh", "-c", "./node_modules/.bin/prisma migrate deploy && node server.js"]
+CMD ["node", "server.js"]
