@@ -33,6 +33,14 @@ export type SearchAnalyticsRow = {
   position?: number;
 };
 
+export type SearchAnalyticsResponse = {
+  rows?: SearchAnalyticsRow[];
+  metadata?: {
+    first_incomplete_date?: string;
+    first_incomplete_hour?: string;
+  };
+};
+
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo';
@@ -255,7 +263,7 @@ export async function querySite(connectionId: string, siteUrl: string, body: Rec
     throw new Error(`Search Analytics query failed: ${text}`);
   }
 
-  return response.json() as Promise<{ rows?: SearchAnalyticsRow[] }>;
+  return response.json() as Promise<SearchAnalyticsResponse>;
 }
 
 export function defaultDateRange(days = 28): {
@@ -264,7 +272,7 @@ export function defaultDateRange(days = 28): {
   previousStartDate: string;
   previousEndDate: string;
 } {
-  const end = subDays(new Date(), 3);
+  const end = subDays(new Date(), 1);
   const start = subDays(end, days - 1);
   const previousEnd = subDays(start, 1);
   const previousStart = subDays(previousEnd, days - 1);

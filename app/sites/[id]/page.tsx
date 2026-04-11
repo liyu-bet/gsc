@@ -53,35 +53,35 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
       endDate: range.endDate,
       dimensions: ['date'],
       rowLimit: 31,
-      dataState: 'final',
+      dataState: 'all',
     }),
     safeQuery(property.connectionId, property.siteUrl, {
       startDate: range.startDate,
       endDate: range.endDate,
       dimensions: ['page'],
       rowLimit: 20,
-      dataState: 'final',
+      dataState: 'all',
     }),
     safeQuery(property.connectionId, property.siteUrl, {
       startDate: range.startDate,
       endDate: range.endDate,
       dimensions: ['query'],
       rowLimit: 20,
-      dataState: 'final',
+      dataState: 'all',
     }),
     safeQuery(property.connectionId, property.siteUrl, {
       startDate: range.startDate,
       endDate: range.endDate,
       dimensions: ['device'],
       rowLimit: 10,
-      dataState: 'final',
+      dataState: 'all',
     }),
     safeQuery(property.connectionId, property.siteUrl, {
       startDate: range.startDate,
       endDate: range.endDate,
       dimensions: ['country'],
       rowLimit: 10,
-      dataState: 'final',
+      dataState: 'all',
     }),
   ]);
 
@@ -113,6 +113,7 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
             <div>
               <h3>Daily trend</h3>
               <p className="muted">{range.startDate} → {range.endDate}</p>
+              <p className="muted">Recent Search Console data can be preliminary and may update over the next 24–72 hours.</p>
             </div>
           </div>
           <div className="table-wrap">

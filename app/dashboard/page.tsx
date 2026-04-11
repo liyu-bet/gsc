@@ -49,12 +49,12 @@ export default async function DashboardPage({
           querySite(property.connectionId, property.siteUrl, {
             startDate: range.startDate,
             endDate: range.endDate,
-            dataState: 'final',
+            dataState: 'all',
           }),
           querySite(property.connectionId, property.siteUrl, {
             startDate: range.previousStartDate,
             endDate: range.previousEndDate,
-            dataState: 'final',
+            dataState: 'all',
           }),
         ]);
 
@@ -123,6 +123,7 @@ export default async function DashboardPage({
             Current range: {range.startDate} → {range.endDate}. Previous range: {range.previousStartDate} →{' '}
             {range.previousEndDate}.
           </p>
+          <p className="muted">Recent Search Console data can be preliminary and may update over the next 24–72 hours.</p>
         </div>
         <div className="hero-grid">
           <MetricCard
