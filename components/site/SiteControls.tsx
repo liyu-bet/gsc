@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
-const RANGE_OPTIONS = [7, 14, 28, 90, 180, 365, 730];
+const RANGE_OPTIONS = [1, 7, 14, 28, 90, 180, 365, 730];
 const SEARCH_TYPES = ['web', 'discover', 'news', 'image', 'video'] as const;
 const STORAGE_KEY = 'gsk-site-workspace-preferences';
 const GLOBAL_STORAGE_KEY = 'gsk-global-preferences';
@@ -27,7 +27,7 @@ export function SiteControls({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const queryString = useMemo(() => searchParams.toString(), [searchParams]);
-  const [mode, setMode] = useState<'preset' | 'custom'>(isCustom ? 'custom' : 'preset');
+  const [customOpen, setCustomOpen] = useState(isCustom);
 
   useEffect(() => {
     const payload = {
@@ -35,7 +35,7 @@ export function SiteControls({
       searchType: currentSearchType,
       endDate: currentEndDate,
       startDate: currentStartDate || '',
-      mode,
+      customOpen: customOpen ? '1' : '0',
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     window.localStorage.setItem(
@@ -45,7 +45,7 @@ export function SiteControls({
         searchType: currentSearchType,
       })
     );
-  }, [currentRange, currentSearchType, currentEndDate, currentStartDate, mode]);
+  }, [currentRange, currentSearchType, currentEndDate, currentStartDate, customOpen]);
 
   useEffect(() => {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -67,17 +67,23 @@ export function SiteControls({
         const next = params.toString();
         router.replace(next ? `${pathname}?${next}` : pathname);
       }
+
+      if (stored.customOpen === '1') {
+        setCustomOpen(true);
+      }
     } catch {
-      // ignore broken storage
+      // ignore
     }
   }, [pathname, queryString, router]);
 
   function updateParams(nextValues: Record<string, string | undefined>) {
     const params = new URLSearchParams(queryString);
+
     for (const [key, value] of Object.entries(nextValues)) {
       if (!value) params.delete(key);
       else params.set(key, value);
     }
+
     router.push(`${pathname}?${params.toString()}`);
   }
 
@@ -93,32 +99,32 @@ export function SiteControls({
             value={currentEndDate}
             onChange={(event) => updateParams({ endDate: event.target.value })}
           />
-          <button type="button" className="text-link-btn" onClick={() => updateParams({ endDate: latestDate })}>
-            Last available: {latestDate}
-          </button>
+          <span className="site-last-date-note">Last available: {latestDate}</span>
         </div>
 
         <div className="site-control-group">
-          <label htmlFor="site-range-mode">Period</label>
+          <label htmlFor="site-range">Period</label>
           <select
-            id="site-range-mode"
+            id="site-range"
             className="site-control-select"
-            value={mode === 'custom' ? 'custom' : String(currentRange)}
+            value={String(currentRange)}
             onChange={(event) => {
-              if (event.target.value === 'custom') {
-                setMode('custom');
-                return;
-              }
-              setMode('preset');
-              updateParams({ range: event.target.value, startDate: undefined });
+              setCustomOpen(false);
+              updateParams({
+                range: event.target.value,
+                startDate: undefined,
+              });
             }}
           >
             {RANGE_OPTIONS.map((days) => (
               <option key={days} value={String(days)}>
-                {days >= 365 ? `${Math.round(days / 365)} year${days >= 730 ? 's' : ''}` : `${days} days`}
+                {days === 1
+                  ? '1 day'
+                  : days >= 365
+                    ? `${Math.round(days / 365)} year${days >= 730 ? 's' : ''}`
+                    : `${days} days`}
               </option>
             ))}
-            <option value="custom">Custom range</option>
           </select>
         </div>
 
@@ -137,9 +143,20 @@ export function SiteControls({
             ))}
           </select>
         </div>
+
+        <div className="site-control-group">
+          <label>Custom range</label>
+          <button
+            type="button"
+            className={`button ghost small ${customOpen ? 'active-filter-button' : ''}`}
+            onClick={() => setCustomOpen((value) => !value)}
+          >
+            {customOpen ? 'Hide custom range' : 'Show custom range'}
+          </button>
+        </div>
       </div>
 
-      {mode === 'custom' ? (
+      {customOpen ? (
         <div className="site-controls site-controls-custom">
           <div className="site-control-group">
             <label htmlFor="site-start-date">Start date</label>
@@ -150,6 +167,22 @@ export function SiteControls({
               value={currentStartDate || ''}
               onChange={(event) => updateParams({ startDate: event.target.value || undefined })}
             />
+          </div>
+
+          <div className="site-control-group">
+            <label>Apply</label>
+            <button
+              type="button"
+              className="button small"
+              onClick={() =>
+                updateParams({
+                  startDate: currentStartDate || undefined,
+                  endDate: currentEndDate,
+                })
+              }
+            >
+              Apply custom range
+            </button>
           </div>
         </div>
       ) : null}

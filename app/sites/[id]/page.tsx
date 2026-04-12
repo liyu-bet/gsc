@@ -61,7 +61,7 @@ type SiteSearchParams = {
   device?: string;
 };
 
-const RANGE_OPTIONS = new Set([7, 14, 28, 90, 180, 365, 730]);
+const RANGE_OPTIONS = new Set([1, 7, 14, 28, 90, 180, 365, 730]);
 const SEARCH_TYPES = new Set(['web', 'discover', 'news', 'image', 'video']);
 
 async function safeQuery(

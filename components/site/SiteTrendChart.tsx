@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 
 type TrendMetric = {
   label: string;
@@ -12,8 +12,6 @@ type TrendMetric = {
   changeText: string;
   changeClass: string;
 };
-
-const STORAGE_KEY = 'gsk-site-visible-metrics';
 
 export function SiteTrendChart({
   series,
@@ -28,43 +26,23 @@ export function SiteTrendChart({
   const height = 320;
   const padding = 14;
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
-  const [visibleLabels, setVisibleLabels] = useState<string[]>(series.map((metric) => metric.label));
 
-  useEffect(() => {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length) {
-        setVisibleLabels(parsed.filter((item) => typeof item === 'string'));
-      }
-    } catch {
-      // ignore broken local storage
-    }
-  }, []);
-
-  useEffect(() => {
-    if (visibleLabels.length) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(visibleLabels));
-    }
-  }, [visibleLabels]);
-
-  const visibleSeries = useMemo(() => {
-    const filtered = series.filter((metric) => visibleLabels.includes(metric.label));
-    return filtered.length ? filtered : series.slice(0, 1);
-  }, [series, visibleLabels]);
-
-  const maxLength = Math.max(...visibleSeries.map((metric) => metric.current.length), 1);
+  const maxLength = Math.max(...series.map((metric) => metric.current.length), 1);
 
   const seriesMeta = useMemo(() => {
-    return visibleSeries.map((metric) => {
+    return series.map((metric) => {
       const merged = [...metric.current, ...metric.previous];
       const min = Math.min(...merged, 0);
       const max = Math.max(...merged, 1);
       const span = max - min || 1;
       return { ...metric, min, max, span };
     });
-  }, [visibleSeries]);
+  }, [series]);
+
+  const axisStep = Math.max(Math.ceil(labels.length / 6), 1);
+  const visibleAxisLabels = labels
+    .map((label, index) => ({ label, index }))
+    .filter((item) => item.index % axisStep === 0 || item.index === labels.length - 1);
 
   const tooltip =
     hoverIndex === null
@@ -97,37 +75,18 @@ export function SiteTrendChart({
 
   const step = (width - padding * 2) / Math.max(maxLength - 1, 1);
   const hoverX = hoverIndex === null ? null : padding + hoverIndex * step;
-  const axisStep = Math.max(Math.floor(labels.length / 7), 1);
-
-  function toggleMetric(label: string) {
-    setVisibleLabels((prev) => {
-      if (prev.includes(label)) {
-        if (prev.length === 1) return prev;
-        return prev.filter((item) => item !== label);
-      }
-      return [...prev, label];
-    });
-  }
 
   return (
     <div className="site-chart-wrap">
-      <div className="site-chart-metrics site-chart-toggle-row">
-        {series.map((metric) => {
-          const active = visibleLabels.includes(metric.label);
-          return (
-            <button
-              key={metric.label}
-              type="button"
-              className={`metric-toggle ${active ? 'active' : ''}`}
-              onClick={() => toggleMetric(metric.label)}
-            >
-              <span className="site-chart-metric-dot" style={{ backgroundColor: metric.color }} />
-              <strong>{metric.currentText}</strong>
-              <span className={metric.changeClass}>{metric.changeText}</span>
-              <span className="muted">{metric.label}</span>
-            </button>
-          );
-        })}
+      <div className="site-chart-metrics">
+        {series.map((metric) => (
+          <div key={metric.label} className="site-chart-metric">
+            <span className="site-chart-metric-dot" style={{ backgroundColor: metric.color }} />
+            <strong>{metric.currentText}</strong>
+            <span className={metric.changeClass}>{metric.changeText}</span>
+            <span className="muted">{metric.label}</span>
+          </div>
+        ))}
       </div>
 
       <div className="site-chart-shell">
@@ -230,14 +189,22 @@ export function SiteTrendChart({
               })
             : null}
         </svg>
-      </div>
 
-      <div className="site-chart-axis">
-        {labels.map((label, index) => (
-          <span key={`${label}-${index}`} className={index % axisStep === 0 ? 'visible' : ''}>
-            {index % axisStep === 0 ? label : ''}
-          </span>
-        ))}
+        <div className="site-axis-overlay">
+          {visibleAxisLabels.map((item) => {
+            const left =
+              maxLength <= 1 ? 0 : (item.index / Math.max(maxLength - 1, 1)) * 100;
+            return (
+              <span
+                key={`${item.label}-${item.index}`}
+                className="site-axis-chip"
+                style={{ left: `${left}%` }}
+              >
+                {item.label}
+              </span>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

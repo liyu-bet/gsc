@@ -27,6 +27,7 @@ const SEARCH_TYPES = [
 ] as const;
 
 const RANGE_OPTIONS = [
+  { key: '1', label: '1 day' },
   { key: '7', label: '7 days' },
   { key: '14', label: '14 days' },
   { key: '28', label: '28 days' },

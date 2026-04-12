@@ -15,8 +15,8 @@ export function QueryCountingChart({
   labels: string[];
   series: BucketSeries[];
 }) {
-  const [mode, setMode] = useState<'total' | 'ranking'>('total');
   const [stacked, setStacked] = useState(false);
+  const [mode, setMode] = useState<'total' | 'ranking'>('total');
 
   const totals = useMemo(() => {
     if (mode === 'total') {
@@ -39,6 +39,11 @@ export function QueryCountingChart({
     ...labels.map((_, index) => totals.reduce((acc, item) => acc + (stacked ? item.values[index] || 0 : 0), 0)),
     ...totals.flatMap((item) => item.values)
   );
+
+  const axisStep = Math.max(Math.ceil(labels.length / 6), 1);
+  const visibleAxisLabels = labels
+    .map((label, index) => ({ label, index }))
+    .filter((item) => item.index % axisStep === 0 || item.index === labels.length - 1);
 
   function path(values: number[], offsetValues?: number[]) {
     return values
@@ -64,6 +69,7 @@ export function QueryCountingChart({
           </button>
         </div>
       </div>
+
       <div className="bucket-legend bucket-legend-top">
         {series.map((bucket) => (
           <span key={bucket.label}>
@@ -76,38 +82,55 @@ export function QueryCountingChart({
           <span>Stacked view</span>
         </label>
       </div>
-      <svg viewBox={`0 0 ${width} ${height}`} className="site-trend-svg query-counting-chart">
-        {[0.2, 0.5, 0.8].map((stop) => (
-          <line
-            key={stop}
-            x1={padding}
-            x2={width - padding}
-            y1={height - padding - stop * (height - padding * 2)}
-            y2={height - padding - stop * (height - padding * 2)}
-            stroke="#dbe4f0"
-            strokeDasharray="4 6"
-          />
-        ))}
-        {totals.map((bucket, index) => {
-          const offsetValues =
-            stacked && mode === 'ranking'
-              ? labels.map((_, rowIndex) => totals.slice(0, index).reduce((acc, item) => acc + (item.values[rowIndex] || 0), 0))
-              : undefined;
-          return (
-            <polyline
-              key={bucket.label}
-              fill="none"
-              stroke={bucket.color}
-              strokeWidth="2.2"
-              points={path(bucket.values, offsetValues)}
+
+      <div className="site-chart-shell">
+        <svg viewBox={`0 0 ${width} ${height}`} className="site-trend-svg query-counting-chart">
+          {[0.2, 0.5, 0.8].map((stop) => (
+            <line
+              key={stop}
+              x1={padding}
+              x2={width - padding}
+              y1={height - padding - stop * (height - padding * 2)}
+              y2={height - padding - stop * (height - padding * 2)}
+              stroke="#dbe4f0"
+              strokeDasharray="4 6"
             />
-          );
-        })}
-      </svg>
-      <div className="site-chart-axis">
-        {labels.map((label, index) => (
-          <span key={`${label}-${index}`}>{index % Math.max(Math.floor(labels.length / 8), 1) === 0 ? label : ''}</span>
-        ))}
+          ))}
+          {totals.map((bucket, index) => {
+            const offsetValues =
+              stacked && mode === 'ranking'
+                ? labels.map((_, rowIndex) =>
+                    totals.slice(0, index).reduce((acc, item) => acc + (item.values[rowIndex] || 0), 0)
+                  )
+                : undefined;
+
+            return (
+              <polyline
+                key={bucket.label}
+                fill="none"
+                stroke={bucket.color}
+                strokeWidth="2.2"
+                points={path(bucket.values, offsetValues)}
+              />
+            );
+          })}
+        </svg>
+
+        <div className="site-axis-overlay">
+          {visibleAxisLabels.map((item) => {
+            const left =
+              labels.length <= 1 ? 0 : (item.index / Math.max(labels.length - 1, 1)) * 100;
+            return (
+              <span
+                key={`${item.label}-${item.index}`}
+                className="site-axis-chip"
+                style={{ left: `${left}%` }}
+              >
+                {item.label}
+              </span>
+            );
+          })}
+        </div>
       </div>
     </section>
   );

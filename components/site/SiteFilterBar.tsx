@@ -19,6 +19,7 @@ export function SiteFilterBar({
     <section className="panel site-detail-panel site-filter-panel">
       <div className="site-filter-bar">
         <div className="site-filter-title">Active filters</div>
+
         <div className="site-filter-chips">
           {filters.map((filter) => (
             <Link key={`${filter.label}:${filter.value}`} href={filter.href} className="site-filter-chip" prefetch>
@@ -27,6 +28,7 @@ export function SiteFilterBar({
             </Link>
           ))}
         </div>
+
         <Link href={clearHref} className="site-filter-clear" prefetch>
           Clear all
         </Link>
