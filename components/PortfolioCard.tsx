@@ -41,14 +41,14 @@ export function PortfolioCard({
   error,
 }: PortfolioCardProps) {
   const chart = buildChartPaths(visibleMetrics, currentSeries, previousSeries, compare);
-  const host = deriveHost(siteUrl);
-  const faviconUrl = host ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64` : '';
 
   return (
     <article className="portfolio-card panel panel-compact">
       <div className="portfolio-title-row">
         <div className="portfolio-title-wrap">
-          {faviconUrl ? <img alt="" className="site-favicon" src={faviconUrl} /> : <span aria-hidden="true" className="site-avatar">{label.slice(0, 1).toUpperCase()}</span>}
+          <span aria-hidden="true" className="site-avatar">
+            {label.slice(0, 1).toUpperCase()}
+          </span>
           <Link className="portfolio-title" href={`/sites/${id}`}>
             {siteUrl}
           </Link>
@@ -103,30 +103,15 @@ export function PortfolioCard({
       <div className="portfolio-actions-row">
         <span className="small-text">{label}</span>
         <div className="portfolio-actions-mini">
-          <Link className="mini-link icon-link" href={`/sites/${id}`} title="Open site workspace">
-            ↗
+          <Link className="mini-link" href={`/sites/${id}`}>
+            Open
           </Link>
-          <form action={`/api/properties/${id}/toggle`} method="post">
-            <input type="hidden" name="nextSelected" value="false" />
-            <button className="icon-link button-reset" title="Hide from dashboard" type="submit">
-              ◌
-            </button>
-          </form>
         </div>
       </div>
 
       {error ? <div className="small-text bad">{error}</div> : null}
     </article>
   );
-}
-
-function deriveHost(siteUrl: string) {
-  try {
-    if (siteUrl.startsWith('sc-domain:')) return siteUrl.replace('sc-domain:', '');
-    return new URL(siteUrl).hostname;
-  } catch {
-    return '';
-  }
 }
 
 function formatMetricValue(metric: MetricKey, value: number) {
