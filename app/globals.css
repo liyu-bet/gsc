@@ -652,3 +652,254 @@ tbody td {
     align-items: flex-start;
   }
 }
+.site-shell {
+  max-width: 1560px;
+}
+
+.site-grid-gap {
+  margin-bottom: 20px;
+}
+
+.site-hero-panel {
+  margin-bottom: 20px;
+}
+
+.site-hero-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.site-top-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.site-top-card {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 14px 16px;
+  background: #fbfdff;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.site-top-card span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.site-top-card strong {
+  font-size: 1.55rem;
+  line-height: 1;
+}
+
+.site-top-card em {
+  font-style: normal;
+  font-size: 0.92rem;
+}
+
+.site-detail-panel {
+  padding: 20px;
+}
+
+.site-chart-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.site-chart-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+
+.site-chart-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.95rem;
+}
+
+.site-chart-metric strong {
+  font-size: 1.1rem;
+}
+
+.site-chart-metric-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.site-trend-svg {
+  width: 100%;
+  height: auto;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f9fbff 100%);
+}
+
+.site-chart-axis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(60px, 1fr));
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.mini-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.mini-tabs > div {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mini-tab {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 5px 9px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  background: #fff;
+}
+
+.mini-tab.active {
+  background: #eef4ff;
+  color: var(--text);
+}
+
+.seogets-table thead th {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.seogets-table tbody td {
+  padding: 10px 8px;
+  font-size: 0.95rem;
+}
+
+.seogets-table tbody td strong {
+  display: inline-block;
+  min-width: 42px;
+  margin-right: 6px;
+}
+
+.seogets-table tbody td span {
+  font-size: 0.86rem;
+}
+
+.seogets-key-cell {
+  max-width: 360px;
+  word-break: break-word;
+}
+
+.brand-placeholder-box {
+  min-height: 220px;
+  border: 1px dashed #c9d6e7;
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+}
+
+.brand-placeholder-circle {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 2px solid var(--muted);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  margin-bottom: 14px;
+  font-weight: 700;
+}
+
+.bucket-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-bottom: 14px;
+  font-size: 0.9rem;
+}
+
+.bucket-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.bucket-legend i {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.bucket-bars {
+  display: grid;
+  gap: 12px;
+}
+
+.bucket-bar-card {
+  display: grid;
+  grid-template-columns: 60px 1fr 52px;
+  gap: 12px;
+  align-items: center;
+}
+
+.bucket-bar-track {
+  background: #eef4fb;
+  border-radius: 999px;
+  height: 12px;
+  overflow: hidden;
+}
+
+.bucket-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+}
+
+.bucket-bar-label,
+.bucket-bar-value {
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+@media (max-width: 1100px) {
+  .site-top-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .site-hero-head,
+  .mini-tabs {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .site-top-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .bucket-bar-card {
+    grid-template-columns: 1fr;
+  }
+}
