@@ -37,6 +37,7 @@ const RANGE_OPTIONS = [
 ] as const;
 
 const STORAGE_KEY = 'gsk-dashboard-preferences';
+const GLOBAL_STORAGE_KEY = 'gsk-global-preferences';
 
 type MetricKey = (typeof METRIC_OPTIONS)[number]['key'];
 
@@ -67,35 +68,52 @@ export function DashboardToolbar({
     const payload = {
       range: String(range),
       searchType,
-      endDate,
       compare: compare ? '1' : '0',
       metrics: visibleMetrics.join(','),
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [range, searchType, endDate, compare, visibleMetrics]);
+    window.localStorage.setItem(
+      GLOBAL_STORAGE_KEY,
+      JSON.stringify({
+        range: String(range),
+        searchType,
+      })
+    );
+  }, [range, searchType, compare, visibleMetrics]);
 
   useEffect(() => {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
+    const params = new URLSearchParams(queryString);
+    let changed = false;
 
     try {
-      const stored = JSON.parse(raw) as Record<string, string>;
-      const params = new URLSearchParams(queryString);
-      let changed = false;
-
-      for (const key of ['range', 'searchType', 'endDate', 'compare', 'metrics'] as const) {
-        if (!params.get(key) && stored[key]) {
-          params.set(key, stored[key]);
-          changed = true;
+      const dashboardRaw = window.localStorage.getItem(STORAGE_KEY);
+      if (dashboardRaw) {
+        const stored = JSON.parse(dashboardRaw) as Record<string, string>;
+        for (const key of ['range', 'searchType', 'compare', 'metrics'] as const) {
+          if (!params.get(key) && stored[key]) {
+            params.set(key, stored[key]);
+            changed = true;
+          }
         }
       }
 
-      if (changed) {
-        const next = params.toString();
-        router.replace(next ? `${pathname}?${next}` : pathname);
+      const globalRaw = window.localStorage.getItem(GLOBAL_STORAGE_KEY);
+      if (globalRaw) {
+        const storedGlobal = JSON.parse(globalRaw) as Record<string, string>;
+        for (const key of ['range', 'searchType'] as const) {
+          if (!params.get(key) && storedGlobal[key]) {
+            params.set(key, storedGlobal[key]);
+            changed = true;
+          }
+        }
       }
     } catch {
       // ignore malformed local state
+    }
+
+    if (changed) {
+      const next = params.toString();
+      router.replace(next ? `${pathname}?${next}` : pathname);
     }
   }, [pathname, queryString, router]);
 
@@ -132,7 +150,6 @@ export function DashboardToolbar({
           <input defaultValue={search} name="q" placeholder="Search" type="search" />
           <input type="hidden" name="sort" value={sort} />
           <input type="hidden" name="range" value={range} />
-          <input type="hidden" name="endDate" value={endDate} />
           <input type="hidden" name="searchType" value={searchType} />
           <input type="hidden" name="compare" value={compare ? '1' : '0'} />
           <input type="hidden" name="metrics" value={visibleMetrics.join(',')} />
@@ -140,9 +157,6 @@ export function DashboardToolbar({
             Search
           </button>
         </form>
-        <button className="button ghost small muted-button" disabled type="button">
-          Create Portfolio View
-        </button>
       </div>
 
       <div className="toolbar-right">
@@ -201,30 +215,21 @@ export function DashboardToolbar({
           ))}
         </div>
 
-        <div className="date-control-inline">
-          <label htmlFor="dashboard-end-date">End date</label>
-          <input
-            id="dashboard-end-date"
-            type="date"
-            value={endDate}
-            onChange={(event) => router.push(buildHref({ endDate: event.target.value }))}
-          />
-        </div>
-
-        <details className="toolbar-menu">
-          <summary>{RANGE_OPTIONS.find((option) => option.key === String(range))?.label || `${range} days`}</summary>
-          <div className="menu-card">
+        <div className="site-control-group dashboard-range-group">
+          <label htmlFor="dashboard-range">Period</label>
+          <select
+            id="dashboard-range"
+            className="site-control-select"
+            value={String(range)}
+            onChange={(event) => router.push(buildHref({ range: event.target.value }))}
+          >
             {RANGE_OPTIONS.map((option) => (
-              <Link
-                className={range === Number(option.key) ? 'menu-item active' : 'menu-item'}
-                href={buildHref({ range: option.key })}
-                key={option.key}
-              >
+              <option key={option.key} value={option.key}>
                 {option.label}
-              </Link>
+              </option>
             ))}
-          </div>
-        </details>
+          </select>
+        </div>
       </div>
     </section>
   );

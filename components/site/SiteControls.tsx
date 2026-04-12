@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 const RANGE_OPTIONS = [7, 14, 28, 90, 180, 365, 730];
 const SEARCH_TYPES = ['web', 'discover', 'news', 'image', 'video'] as const;
 const STORAGE_KEY = 'gsk-site-workspace-preferences';
+const GLOBAL_STORAGE_KEY = 'gsk-global-preferences';
 
 export function SiteControls({
   currentRange,
@@ -28,21 +29,31 @@ export function SiteControls({
       endDate: currentEndDate,
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    window.localStorage.setItem(
+      GLOBAL_STORAGE_KEY,
+      JSON.stringify({
+        range: String(currentRange),
+        searchType: currentSearchType,
+      })
+    );
   }, [currentRange, currentSearchType, currentEndDate]);
 
   useEffect(() => {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
+
     try {
       const stored = JSON.parse(raw) as Record<string, string>;
       const params = new URLSearchParams(queryString);
       let changed = false;
+
       for (const key of ['range', 'searchType', 'endDate'] as const) {
         if (!params.get(key) && stored[key]) {
           params.set(key, stored[key]);
           changed = true;
         }
       }
+
       if (changed) {
         const next = params.toString();
         router.replace(next ? `${pathname}?${next}` : pathname);

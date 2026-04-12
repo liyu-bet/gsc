@@ -108,7 +108,7 @@ export default async function DashboardPage({
     : 'web';
   const compare = params.compare !== '0';
   const visibleMetrics = parseVisibleMetrics(params.metrics);
-  const endDate = normalizeEndDate(params.endDate);
+  const endDate = latestAvailableDate();
 
   const connections = await prisma.googleConnection.findMany({
     include: {

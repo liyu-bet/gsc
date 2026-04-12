@@ -469,7 +469,11 @@ export default async function SiteDetailPage({
             <p className="muted">Current range: {range.startDate} → {range.endDate}</p>
           </div>
           <div className="header-actions">
-            <Link className="button ghost small" href="/dashboard" prefetch>
+            <Link
+              className="button ghost small"
+              href={`/dashboard?range=${rangeDays}&searchType=${searchType}`}
+              prefetch
+            >
               Back to dashboard
             </Link>
           </div>
