@@ -33,14 +33,6 @@ export type SearchAnalyticsRow = {
   position?: number;
 };
 
-export type SearchAnalyticsResponse = {
-  rows?: SearchAnalyticsRow[];
-  metadata?: {
-    first_incomplete_date?: string;
-    first_incomplete_hour?: string;
-  };
-};
-
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo';
@@ -53,7 +45,7 @@ export function buildGoogleAuthUrl(state: string): string {
     response_type: 'code',
     access_type: 'offline',
     include_granted_scopes: 'true',
-    prompt: 'consent select_account',
+    prompt: 'consent',
     scope: env.googleScopes,
     state,
   });
@@ -162,19 +154,15 @@ export async function listSearchConsoleSites(connection: GoogleConnection): Prom
 }
 
 export async function syncSitesForConnection(connectionId: string): Promise<number> {
-  const connection = await prisma.googleConnection.findUnique({
-    where: { id: connectionId },
-    include: { properties: true },
-  });
+  const connection = await prisma.googleConnection.findUnique({ where: { id: connectionId } });
   if (!connection) {
     throw new Error('Connection not found');
   }
 
   const sites = await listSearchConsoleSites(connection);
-  const liveSiteUrls = new Set(sites.map((site) => site.siteUrl));
 
-  await prisma.$transaction([
-    ...sites.map((site) =>
+  await Promise.all(
+    sites.map((site) =>
       prisma.gscProperty.upsert({
         where: {
           connectionId_siteUrl: {
@@ -194,14 +182,8 @@ export async function syncSitesForConnection(connectionId: string): Promise<numb
           label: deriveSiteLabel(site.siteUrl),
         },
       })
-    ),
-    prisma.gscProperty.deleteMany({
-      where: {
-        connectionId: connection.id,
-        siteUrl: { notIn: [...liveSiteUrls] },
-      },
-    }),
-  ]);
+    )
+  );
 
   return sites.length;
 }
@@ -273,7 +255,7 @@ export async function querySite(connectionId: string, siteUrl: string, body: Rec
     throw new Error(`Search Analytics query failed: ${text}`);
   }
 
-  return response.json() as Promise<SearchAnalyticsResponse>;
+  return response.json() as Promise<{ rows?: SearchAnalyticsRow[] }>;
 }
 
 export function defaultDateRange(days = 28): {
@@ -282,7 +264,7 @@ export function defaultDateRange(days = 28): {
   previousStartDate: string;
   previousEndDate: string;
 } {
-  const end = subDays(new Date(), 1);
+  const end = subDays(new Date(), 3);
   const start = subDays(end, days - 1);
   const previousEnd = subDays(start, 1);
   const previousStart = subDays(previousEnd, days - 1);
