@@ -1,9 +1,13 @@
-export function AppHeader() {
+type AppHeaderProps = {
+  compact?: boolean;
+};
+
+export function AppHeader({ compact = false }: AppHeaderProps) {
   return (
-    <header className="app-header">
+    <header className={compact ? 'app-header app-header-compact' : 'app-header'}>
       <div>
         <div className="badge">Portfolio dashboard</div>
-        <h1>Google Search Console workspace</h1>
+        <h1>{compact ? 'SEO-style portfolio view' : 'Google Search Console workspace'}</h1>
         <p className="muted">
           Connect multiple Google accounts, select properties, and monitor portfolio performance in one
           place.

@@ -53,7 +53,7 @@ export function buildGoogleAuthUrl(state: string): string {
     response_type: 'code',
     access_type: 'offline',
     include_granted_scopes: 'true',
-    prompt: 'consent select_account',
+    prompt: 'consent',
     scope: env.googleScopes,
     state,
   });
@@ -162,19 +162,15 @@ export async function listSearchConsoleSites(connection: GoogleConnection): Prom
 }
 
 export async function syncSitesForConnection(connectionId: string): Promise<number> {
-  const connection = await prisma.googleConnection.findUnique({
-    where: { id: connectionId },
-    include: { properties: true },
-  });
+  const connection = await prisma.googleConnection.findUnique({ where: { id: connectionId } });
   if (!connection) {
     throw new Error('Connection not found');
   }
 
   const sites = await listSearchConsoleSites(connection);
-  const liveSiteUrls = new Set(sites.map((site) => site.siteUrl));
 
-  await prisma.$transaction([
-    ...sites.map((site) =>
+  await Promise.all(
+    sites.map((site) =>
       prisma.gscProperty.upsert({
         where: {
           connectionId_siteUrl: {
@@ -194,14 +190,8 @@ export async function syncSitesForConnection(connectionId: string): Promise<numb
           label: deriveSiteLabel(site.siteUrl),
         },
       })
-    ),
-    prisma.gscProperty.deleteMany({
-      where: {
-        connectionId: connection.id,
-        siteUrl: { notIn: [...liveSiteUrls] },
-      },
-    }),
-  ]);
+    )
+  );
 
   return sites.length;
 }
