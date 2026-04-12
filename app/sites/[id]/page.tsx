@@ -1,8 +1,16 @@
 import Link from 'next/link';
+import { format, parseISO } from 'date-fns';
 import { notFound } from 'next/navigation';
 import { requireAdmin } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { defaultDateRange, querySite, SearchAnalyticsRow } from '@/lib/google';
+import { countryName } from '@/lib/countries';
+import { formatDecimal, formatNumber } from '@/lib/format';
+import { SiteTrendChart } from '@/components/site/SiteTrendChart';
+import { WorkspaceTable } from '@/components/site/WorkspaceTable';
+import { BrandedKeywordsPanel } from '@/components/site/BrandedKeywordsPanel';
+import { QueryCountingChart } from '@/components/site/QueryCountingChart';
+import { SiteControls } from '@/components/site/SiteControls';
 import { deltaPercent, formatDecimal, formatNumber, formatPercent } from '@/lib/format';
 
 type SafeReport = {
@@ -32,6 +40,10 @@ type DailyMetric = {
   changeText: string;
   changeClass: string;
 };
+
+
+const RANGE_OPTIONS = new Set([7, 14, 28, 90, 180, 365, 730]);
+const SEARCH_TYPES = new Set(['web', 'discover', 'news', 'image', 'video']);
 
 async function safeQuery(
   connectionId: string,
@@ -167,6 +179,26 @@ function buildMetricSeries(dailyCurrent: SearchAnalyticsRow[], dailyPrevious: Se
   ];
 }
 
+function deltaPercent(current: number, previous: number) {
+  if (!previous && !current) return 0;
+  if (!previous && current > 0) return 100;
+  return ((current - previous) / previous) * 100;
+}
+
+function clampRange(raw: string | undefined) {
+  const parsed = Number(raw || 90);
+  return RANGE_OPTIONS.has(parsed) ? parsed : 90;
+}
+
+function normalizeSearchType(raw: string | undefined) {
+  return SEARCH_TYPES.has(raw || 'web') ? (raw as string) : 'web';
+}
+
+function formatLabel(date: string) {
+  return format(parseISO(date), 'MMM d');
+}
+
+function buildBucketSeries(rows: SearchAnalyticsRow[], labels: string[]) {
 function buildPolyline(values: number[], width: number, height: number, padding = 14) {
   if (!values.length) return '';
   const max = Math.max(...values, 1);
@@ -313,6 +345,45 @@ function RankingBuckets({ rows }: { rows: EnrichedRow[] }) {
     { label: '4-10', min: 3, max: 10, color: '#1d4ed8' },
     { label: '11-20', min: 10, max: 20, color: '#3b82f6' },
     { label: '21+', min: 20, max: Number.POSITIVE_INFINITY, color: '#93c5fd' },
+
+  ];
+
+  const dateIndex = new Map(labels.map((date, index) => [date, index]));
+  const series = buckets.map((bucket) => ({ ...bucket, values: new Array(labels.length).fill(0) }));
+
+  rows.forEach((row) => {
+    const date = row.keys?.[0] || '';
+    const index = dateIndex.get(date);
+    if (index === undefined) return;
+    const position = Number(row.position || 0);
+    const bucket = series.find((item) => position > item.min && position <= item.max);
+    if (!bucket) return;
+    bucket.values[index] += 1;
+  });
+
+  return series;
+}
+
+function formatDeviceName(value: string) {
+  if (!value) return 'Unknown';
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
+function queryBase(range: ReturnType<typeof defaultDateRange>, searchType: string) {
+  return {
+    dataState: 'all' as const,
+    ...(searchType !== 'web' ? { type: searchType } : {}),
+  };
+}
+
+export default async function SiteDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams?: Promise<{ range?: string; searchType?: string }>;
+}) {
+=======
   ].map((bucket) => ({
     ...bucket,
     total: rows.filter((row) => row.position > bucket.min && row.position <= bucket.max).length,
@@ -375,8 +446,12 @@ function BrandedPlaceholder() {
 }
 
 export default async function SiteDetailPage({ params }: { params: Promise<{ id: string }> }) {
+>>>>>>> 0f07513c01fbd7e5218cfeb7fbc16df2c8ed0df5
   await requireAdmin();
   const { id } = await params;
+  const incomingSearchParams = (await searchParams) || {};
+  const rangeDays = clampRange(incomingSearchParams.range);
+  const searchType = normalizeSearchType(incomingSearchParams.searchType);
 
   const property = await prisma.gscProperty.findUnique({
     where: { id },
@@ -387,6 +462,102 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
     notFound();
   }
 
+<<<<<<< HEAD
+  const range = defaultDateRange(rangeDays);
+  const base = queryBase(range, searchType);
+
+  const [
+    dailyCurrent,
+    dailyPrevious,
+    pagesCurrent,
+    pagesPrevious,
+    queriesCurrent,
+    queriesPrevious,
+    devicesCurrent,
+    devicesPrevious,
+    countriesCurrent,
+    countriesPrevious,
+    queryCountDaily,
+  ] = await Promise.all([
+    safeQuery(property.connectionId, property.siteUrl, {
+      startDate: range.startDate,
+      endDate: range.endDate,
+      dimensions: ['date'],
+      rowLimit: rangeDays + 5,
+      ...base,
+    }),
+    safeQuery(property.connectionId, property.siteUrl, {
+      startDate: range.previousStartDate,
+      endDate: range.previousEndDate,
+      dimensions: ['date'],
+      rowLimit: rangeDays + 5,
+      ...base,
+    }),
+    safeQuery(property.connectionId, property.siteUrl, {
+      startDate: range.startDate,
+      endDate: range.endDate,
+      dimensions: ['page'],
+      rowLimit: 100,
+      ...base,
+    }),
+    safeQuery(property.connectionId, property.siteUrl, {
+      startDate: range.previousStartDate,
+      endDate: range.previousEndDate,
+      dimensions: ['page'],
+      rowLimit: 100,
+      ...base,
+    }),
+    safeQuery(property.connectionId, property.siteUrl, {
+      startDate: range.startDate,
+      endDate: range.endDate,
+      dimensions: ['query'],
+      rowLimit: 100,
+      ...base,
+    }),
+    safeQuery(property.connectionId, property.siteUrl, {
+      startDate: range.previousStartDate,
+      endDate: range.previousEndDate,
+      dimensions: ['query'],
+      rowLimit: 100,
+      ...base,
+    }),
+    safeQuery(property.connectionId, property.siteUrl, {
+      startDate: range.startDate,
+      endDate: range.endDate,
+      dimensions: ['device'],
+      rowLimit: 10,
+      ...base,
+    }),
+    safeQuery(property.connectionId, property.siteUrl, {
+      startDate: range.previousStartDate,
+      endDate: range.previousEndDate,
+      dimensions: ['device'],
+      rowLimit: 10,
+      ...base,
+    }),
+    safeQuery(property.connectionId, property.siteUrl, {
+      startDate: range.startDate,
+      endDate: range.endDate,
+      dimensions: ['country'],
+      rowLimit: 50,
+      ...base,
+    }),
+    safeQuery(property.connectionId, property.siteUrl, {
+      startDate: range.previousStartDate,
+      endDate: range.previousEndDate,
+      dimensions: ['country'],
+      rowLimit: 50,
+      ...base,
+    }),
+    safeQuery(property.connectionId, property.siteUrl, {
+      startDate: range.startDate,
+      endDate: range.endDate,
+      dimensions: ['date', 'query'],
+      rowLimit: 25000,
+      ...base,
+    }),
+  ]);
+=======
   const range = defaultDateRange(90);
 
   const [dailyCurrent, dailyPrevious, pagesCurrent, pagesPrevious, queriesCurrent, queriesPrevious, devicesCurrent, devicesPrevious, countriesCurrent, countriesPrevious] =
@@ -507,6 +678,59 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
   const errors = [dailyCurrent, dailyPrevious, pagesCurrent, pagesPrevious, queriesCurrent, queriesPrevious, devicesCurrent, devicesPrevious, countriesCurrent, countriesPrevious]
     .map((report) => report.error)
     .filter(Boolean) as string[];
+>>>>>>> 0f07513c01fbd7e5218cfeb7fbc16df2c8ed0df5
+
+  const pageRows = enrichRows(pagesCurrent.rows, pagesPrevious.rows);
+  const queryRows = enrichRows(queriesCurrent.rows, queriesPrevious.rows);
+  const deviceRows = enrichRows(devicesCurrent.rows, devicesPrevious.rows).map((row) => ({
+    ...row,
+    key: formatDeviceName(row.key),
+  }));
+  const countryRows = enrichRows(countriesCurrent.rows, countriesPrevious.rows).map((row) => ({
+    ...row,
+    key: countryName(row.key),
+  }));
+  const newRankings = queryRows
+    .filter((row) => row.previousImpressions === 0 && row.impressions > 0)
+    .sort((a, b) => b.impressions - a.impressions)
+    .slice(0, 50);
+
+  const chartSeries = buildMetricSeries(dailyCurrent.rows, dailyPrevious.rows);
+  const currentLabels = dailyCurrent.rows.map((row) => formatLabel(row.keys?.[0] || range.startDate));
+  const previousLabels = dailyPrevious.rows.map((row) => formatLabel(row.keys?.[0] || range.previousStartDate));
+  const bucketLabels = dailyCurrent.rows.map((row) => row.keys?.[0] || '');
+  const bucketSeries = buildBucketSeries(queryCountDaily.rows, bucketLabels);
+
+  const overviewCards = [
+    {
+      label: 'Queries',
+      current: formatNumber(queryRows.length),
+      change: formatTrend(deltaPercent(sum(queryRows, (row) => row.clicks), sum(queryRows, (row) => row.previousClicks))),
+      changeClass: trendClass(deltaPercent(sum(queryRows, (row) => row.clicks), sum(queryRows, (row) => row.previousClicks))),
+    },
+    {
+      label: 'Pages',
+      current: formatNumber(pageRows.length),
+      change: formatTrend(deltaPercent(sum(pageRows, (row) => row.clicks), sum(pageRows, (row) => row.previousClicks))),
+      changeClass: trendClass(deltaPercent(sum(pageRows, (row) => row.clicks), sum(pageRows, (row) => row.previousClicks))),
+    },
+    {
+      label: 'Countries',
+      current: formatNumber(countryRows.length),
+      change: formatTrend(deltaPercent(sum(countryRows, (row) => row.clicks), sum(countryRows, (row) => row.previousClicks))),
+      changeClass: trendClass(deltaPercent(sum(countryRows, (row) => row.clicks), sum(countryRows, (row) => row.previousClicks))),
+    },
+    {
+      label: 'Devices',
+      current: formatNumber(deviceRows.length),
+      change: `${formatDecimal(weightedAverage(deviceRows, (row) => row.position, (row) => row.impressions), 1)} avg pos`,
+      changeClass: 'good',
+    },
+  ];
+
+  const errors = [dailyCurrent, dailyPrevious, pagesCurrent, pagesPrevious, queriesCurrent, queriesPrevious, devicesCurrent, devicesPrevious, countriesCurrent, countriesPrevious, queryCountDaily]
+    .map((report) => report.error)
+    .filter(Boolean) as string[];
 
   return (
     <main className="page-shell site-shell">
@@ -537,6 +761,11 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
         </div>
       </section>
 
+<<<<<<< HEAD
+      <section className="panel site-detail-panel site-controls-panel">
+        <SiteControls currentRange={rangeDays} currentSearchType={searchType} />
+      </section>
+
       {errors.length > 0 ? (
         <div className="alert error">
           Some reports could not be loaded for this site. If you recently removed this property in Search Console, press “Refresh sites” on the connected account so stale properties are removed from the app database.
@@ -544,6 +773,30 @@ export default async function SiteDetailPage({ params }: { params: Promise<{ id:
       ) : null}
 
       <section className="panel site-detail-panel">
+<<<<<<< HEAD
+        <SiteTrendChart series={chartSeries} labels={currentLabels} previousLabels={previousLabels} />
+      </section>
+
+      <section className="grid two-columns site-grid-gap">
+        <WorkspaceTable title="Queries" rows={queryRows} keyLabel="Query" />
+        <WorkspaceTable title="Pages" rows={pageRows} keyLabel="Page" />
+      </section>
+
+      <section className="grid two-columns site-grid-gap">
+        <BrandedKeywordsPanel
+          propertyId={property.id}
+          rows={queryRows.map((row) => ({ key: row.key, clicks: row.clicks, previousClicks: row.previousClicks }))}
+        />
+        <QueryCountingChart labels={bucketLabels.map((item) => formatLabel(item))} series={bucketSeries} />
+      </section>
+
+      <section className="grid two-columns site-grid-gap">
+        <WorkspaceTable title="Countries" rows={countryRows} keyLabel="Country" />
+        <WorkspaceTable title="New rankings" rows={newRankings} keyLabel="Query" />
+      </section>
+
+      <WorkspaceTable title="Devices" rows={deviceRows} keyLabel="Device" />
+=======
         <SparkChart series={chartSeries} labels={axisLabels} />
       </section>
 
