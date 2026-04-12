@@ -1182,3 +1182,99 @@ tbody td {
 .dashboard-range-group {
   min-width: 150px;
 }
+.site-controls-wrap {
+  display: grid;
+  gap: 14px;
+}
+
+.site-controls-custom {
+  padding-top: 2px;
+}
+
+.text-link-btn {
+  border: none;
+  background: transparent;
+  color: var(--accent, #2563eb);
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.82rem;
+}
+
+.site-filter-panel {
+  margin-bottom: 18px;
+}
+
+.site-filter-bar {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.site-filter-title {
+  font-weight: 600;
+}
+
+.site-filter-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.site-filter-chip {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: #fff;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 0.86rem;
+}
+
+.site-filter-chip strong {
+  font-size: 0.95rem;
+}
+
+.site-filter-clear {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.86rem;
+}
+
+.table-drill-link {
+  color: var(--text);
+  text-decoration: none;
+  display: inline-block;
+  width: 100%;
+}
+
+.table-drill-link:hover {
+  text-decoration: underline;
+}
+
+.table-row-active td {
+  background: rgba(37, 99, 235, 0.06);
+}
+
+.toolbar-last-date {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-top: 24px;
+}
+
+@media (max-width: 760px) {
+  .site-filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .toolbar-last-date {
+    margin-top: 8px;
+  }
+}

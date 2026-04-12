@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 
 type WorkspaceRow = {
@@ -12,6 +13,8 @@ type WorkspaceRow = {
   previousImpressions: number;
   previousCtr: number;
   previousPosition: number;
+  href?: string;
+  active?: boolean;
 };
 
 type SortKey = 'key' | 'clicks' | 'impressions' | 'ctr' | 'position';
@@ -100,8 +103,16 @@ export function WorkspaceTable({
           </thead>
           <tbody>
             {visibleRows.map((row) => (
-              <tr key={row.key}>
-                <td className="seogets-key-cell">{row.key || '—'}</td>
+              <tr key={row.key} className={row.active ? 'table-row-active' : ''}>
+                <td className="seogets-key-cell">
+                  {row.href ? (
+                    <Link href={row.href} className="table-drill-link" prefetch>
+                      {row.key || '—'}
+                    </Link>
+                  ) : (
+                    row.key || '—'
+                  )}
+                </td>
                 <td>
                   <strong>{formatInt(row.clicks)}</strong>
                   <span className={trendClass(percentChange(row.clicks, row.previousClicks))}>

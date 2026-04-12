@@ -229,6 +229,7 @@ export function DashboardToolbar({
               </option>
             ))}
           </select>
+          <span className="toolbar-last-date">Last available: {endDate}</span>
         </div>
       </div>
     </section>
