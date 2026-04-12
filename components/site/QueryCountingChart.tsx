@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
 type BucketSeries = {
   label: string;
@@ -15,26 +15,38 @@ export function QueryCountingChart({
   labels: string[];
   series: BucketSeries[];
 }) {
-  const width = 760;
-  const height = 260;
+  const [mode, setMode] = useState<'total' | 'ranking'>('total');
+  const [stacked, setStacked] = useState(false);
+
+  const totals = useMemo(() => {
+    if (mode === 'total') {
+      return [
+        {
+          label: 'Total',
+          color: '#60a5fa',
+          values: labels.map((_, index) => series.reduce((acc, item) => acc + (item.values[index] || 0), 0)),
+        },
+      ];
+    }
+    return series;
+  }, [labels, mode, series]);
+
+  const width = 720;
+  const height = 220;
   const padding = 18;
+  const max = Math.max(
+    1,
+    ...labels.map((_, index) => totals.reduce((acc, item) => acc + (stacked ? item.values[index] || 0 : 0), 0)),
+    ...totals.flatMap((item) => item.values)
+  );
 
-  const maxValue = useMemo(() => {
-    const all = series.flatMap((item) => item.values);
-    return Math.max(...all, 1);
-  }, [series]);
-
-  function pointY(value: number) {
-    return height - padding - (value / maxValue) * (height - padding * 2);
-  }
-
-  function polyline(values: number[]) {
-    if (!values.length) return '';
+  function path(values: number[], offsetValues?: number[]) {
     return values
       .map((value, index) => {
         const x = padding + (index * (width - padding * 2)) / Math.max(values.length - 1, 1);
-        const y = pointY(value);
-        return `${x},${y}`;
+        const stackedValue = value + (offsetValues?.[index] || 0);
+        const y = height - padding - (stackedValue / max) * (height - padding * 2);
+        return `${index === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`;
       })
       .join(' ');
   }
@@ -44,22 +56,28 @@ export function QueryCountingChart({
       <div className="mini-tabs">
         <h3>Query counting</h3>
         <div>
-          <span className="mini-tab active">Total</span>
-          <span className="mini-tab">By ranking</span>
+          <button type="button" className={`mini-tab-btn ${mode === 'total' ? 'active' : ''}`} onClick={() => setMode('total')}>
+            Total
+          </button>
+          <button type="button" className={`mini-tab-btn ${mode === 'ranking' ? 'active' : ''}`} onClick={() => setMode('ranking')}>
+            By ranking
+          </button>
         </div>
       </div>
-
-      <div className="bucket-legend">
-        {series.map((item) => (
-          <span key={item.label}>
-            <i style={{ backgroundColor: item.color }} />
-            {item.label}
+      <div className="bucket-legend bucket-legend-top">
+        {series.map((bucket) => (
+          <span key={bucket.label}>
+            <i style={{ backgroundColor: bucket.color }} />
+            {bucket.label}
           </span>
         ))}
+        <label className="stacked-toggle">
+          <input type="checkbox" checked={stacked} onChange={(event) => setStacked(event.target.checked)} />
+          <span>Stacked view</span>
+        </label>
       </div>
-
-      <svg viewBox={`0 0 ${width} ${height}`} className="site-trend-svg" role="img" aria-label="Query counting trend">
-        {[0.25, 0.5, 0.75].map((stop) => (
+      <svg viewBox={`0 0 ${width} ${height}`} className="site-trend-svg query-counting-chart">
+        {[0.2, 0.5, 0.8].map((stop) => (
           <line
             key={stop}
             x1={padding}
@@ -70,47 +88,26 @@ export function QueryCountingChart({
             strokeDasharray="4 6"
           />
         ))}
-
-        {series.map((item) => (
-          <polyline
-            key={item.label}
-            fill="none"
-            stroke={item.color}
-            strokeWidth="2.2"
-            points={polyline(item.values)}
-          />
-        ))}
-      </svg>
-
-      <div className="site-chart-axis">
-        {labels.map((label, index) => (
-          <span key={`${label}-${index}`}>
-            {index % Math.max(Math.floor(labels.length / 8), 1) === 0 ? label : ''}
-          </span>
-        ))}
-      </div>
-
-      <div className="bucket-bars">
-        {series.map((item) => {
-          const total = item.values.reduce((a, b) => a + b, 0);
-          const share = maxValue ? (Math.max(...item.values, 0) / maxValue) * 100 : 0;
-
+        {totals.map((bucket, index) => {
+          const offsetValues =
+            stacked && mode === 'ranking'
+              ? labels.map((_, rowIndex) => totals.slice(0, index).reduce((acc, item) => acc + (item.values[rowIndex] || 0), 0))
+              : undefined;
           return (
-            <div key={item.label} className="bucket-bar-card">
-              <div className="bucket-bar-label">{item.label}</div>
-              <div className="bucket-bar-track">
-                <div
-                  className="bucket-bar-fill"
-                  style={{
-                    width: `${share}%`,
-                    backgroundColor: item.color,
-                  }}
-                />
-              </div>
-              <div className="bucket-bar-value">{total}</div>
-            </div>
+            <polyline
+              key={bucket.label}
+              fill="none"
+              stroke={bucket.color}
+              strokeWidth="2.2"
+              points={path(bucket.values, offsetValues)}
+            />
           );
         })}
+      </svg>
+      <div className="site-chart-axis">
+        {labels.map((label, index) => (
+          <span key={`${label}-${index}`}>{index % Math.max(Math.floor(labels.length / 8), 1) === 0 ? label : ''}</span>
+        ))}
       </div>
     </section>
   );

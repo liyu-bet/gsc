@@ -3,7 +3,7 @@ import { format, parseISO } from 'date-fns';
 import { notFound } from 'next/navigation';
 import { requireAdmin } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { defaultDateRange, querySite, SearchAnalyticsRow } from '@/lib/google';
+import { defaultDateRange, latestAvailableDate, querySite, SearchAnalyticsRow } from '@/lib/google';
 import { countryName } from '@/lib/countries';
 import { formatDecimal, formatNumber } from '@/lib/format';
 import { SiteTrendChart } from '@/components/site/SiteTrendChart';
@@ -59,10 +59,7 @@ async function safeQuery(
   }
 }
 
-function metricNumber(
-  row: SearchAnalyticsRow | undefined,
-  key: 'clicks' | 'impressions' | 'ctr' | 'position'
-) {
+function metricNumber(row: SearchAnalyticsRow | undefined, key: 'clicks' | 'impressions' | 'ctr' | 'position') {
   return Number(row?.[key] || 0);
 }
 
@@ -96,11 +93,7 @@ function sum(items: EnrichedRow[], selector: (item: EnrichedRow) => number): num
   return items.reduce((acc, item) => acc + selector(item), 0);
 }
 
-function weightedAverage(
-  items: EnrichedRow[],
-  valueSelector: (item: EnrichedRow) => number,
-  weightSelector: (item: EnrichedRow) => number
-) {
+function weightedAverage(items: EnrichedRow[], valueSelector: (item: EnrichedRow) => number, weightSelector: (item: EnrichedRow) => number) {
   const totalWeight = items.reduce((acc, item) => acc + weightSelector(item), 0);
   if (!totalWeight) return 0;
   return items.reduce((acc, item) => acc + valueSelector(item) * weightSelector(item), 0) / totalWeight;
@@ -121,10 +114,7 @@ function formatPositionShift(current: number, previous: number) {
   return `${sign}${formatDecimal(shift, 1)}`;
 }
 
-function buildMetricSeries(
-  dailyCurrent: SearchAnalyticsRow[],
-  dailyPrevious: SearchAnalyticsRow[]
-): DailyMetric[] {
+function buildMetricSeries(dailyCurrent: SearchAnalyticsRow[], dailyPrevious: SearchAnalyticsRow[]): DailyMetric[] {
   const currentClicks = dailyCurrent.map((row) => metricNumber(row, 'clicks'));
   const previousClicks = dailyPrevious.map((row) => metricNumber(row, 'clicks'));
   const currentImpressions = dailyCurrent.map((row) => metricNumber(row, 'impressions'));
@@ -140,12 +130,8 @@ function buildMetricSeries(
   const prevImpressions = previousImpressions.reduce((a, b) => a + b, 0);
   const avgCtr = totalImpressions ? (totalClicks / totalImpressions) * 100 : 0;
   const prevCtr = prevImpressions ? (prevClicks / prevImpressions) * 100 : 0;
-  const avgPosition = currentPosition.length
-    ? currentPosition.reduce((a, b) => a + b, 0) / currentPosition.length
-    : 0;
-  const prevPosition = previousPosition.length
-    ? previousPosition.reduce((a, b) => a + b, 0) / previousPosition.length
-    : 0;
+  const avgPosition = currentPosition.length ? currentPosition.reduce((a, b) => a + b, 0) / currentPosition.length : 0;
+  const prevPosition = previousPosition.length ? previousPosition.reduce((a, b) => a + b, 0) / previousPosition.length : 0;
 
   return [
     {
@@ -206,6 +192,15 @@ function normalizeSearchType(raw: string | undefined) {
   return SEARCH_TYPES.has(raw || 'web') ? (raw as string) : 'web';
 }
 
+function normalizeEndDate(raw: string | undefined) {
+  if (!raw) return latestAvailableDate();
+  try {
+    return format(parseISO(raw), 'yyyy-MM-dd');
+  } catch {
+    return latestAvailableDate();
+  }
+}
+
 function formatLabel(date: string) {
   return format(parseISO(date), 'MMM d');
 }
@@ -251,13 +246,14 @@ export default async function SiteDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams?: Promise<{ range?: string; searchType?: string }>;
+  searchParams?: Promise<{ range?: string; searchType?: string; endDate?: string }>;
 }) {
   await requireAdmin();
   const { id } = await params;
   const incomingSearchParams = (await searchParams) || {};
   const rangeDays = clampRange(incomingSearchParams.range);
   const searchType = normalizeSearchType(incomingSearchParams.searchType);
+  const endDate = normalizeEndDate(incomingSearchParams.endDate);
 
   const property = await prisma.gscProperty.findUnique({
     where: { id },
@@ -268,7 +264,7 @@ export default async function SiteDetailPage({
     notFound();
   }
 
-  const range = defaultDateRange(rangeDays);
+  const range = defaultDateRange(rangeDays, endDate);
   const base = queryBase(searchType);
 
   const [
@@ -381,15 +377,13 @@ export default async function SiteDetailPage({
 
   const chartSeries = buildMetricSeries(dailyCurrent.rows, dailyPrevious.rows);
   const currentLabels = dailyCurrent.rows.map((row) => formatLabel(row.keys?.[0] || range.startDate));
-  const previousLabels = dailyPrevious.rows.map((row) =>
-    formatLabel(row.keys?.[0] || range.previousStartDate)
-  );
+  const previousLabels = dailyPrevious.rows.map((row) => formatLabel(row.keys?.[0] || range.previousStartDate));
   const bucketLabels = dailyCurrent.rows.map((row) => row.keys?.[0] || '');
   const bucketSeries = buildBucketSeries(queryCountDaily.rows, bucketLabels);
 
   const overviewCards = [
     {
-      label: 'Queries',
+      label: 'Ranking queries',
       current: formatNumber(queryRows.length),
       change: formatTrend(
         deltaPercent(
@@ -405,7 +399,7 @@ export default async function SiteDetailPage({
       ),
     },
     {
-      label: 'Pages',
+      label: 'Ranking pages',
       current: formatNumber(pageRows.length),
       change: formatTrend(
         deltaPercent(
@@ -472,14 +466,10 @@ export default async function SiteDetailPage({
             <h1>{property.label || property.siteUrl}</h1>
             <p className="muted">{property.siteUrl}</p>
             <p className="muted">Connected Google account: {property.connection.email}</p>
+            <p className="muted">Current range: {range.startDate} → {range.endDate}</p>
           </div>
           <div className="header-actions">
-            <form action={`/api/connections/${property.connectionId}/sync`} method="post">
-              <button className="button small" type="submit">
-                Refresh sites
-              </button>
-            </form>
-            <Link className="button ghost small" href="/dashboard">
+            <Link className="button ghost small" href="/dashboard" prefetch>
               Back to dashboard
             </Link>
           </div>
@@ -497,14 +487,12 @@ export default async function SiteDetailPage({
       </section>
 
       <section className="panel site-detail-panel site-controls-panel">
-        <SiteControls currentRange={rangeDays} currentSearchType={searchType} />
+        <SiteControls currentRange={rangeDays} currentSearchType={searchType} currentEndDate={endDate} />
       </section>
 
       {errors.length > 0 ? (
         <div className="alert error">
-          Some reports could not be loaded for this site. If you recently removed this property in
-          Search Console, press “Refresh sites” on the connected account so stale properties are
-          removed from the app database.
+          Some reports could not be loaded for this site. If you recently removed this property in Search Console, press “Refresh sites” on the dashboard connection so stale properties are removed from the app database.
         </div>
       ) : null}
 

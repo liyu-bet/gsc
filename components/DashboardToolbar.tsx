@@ -1,4 +1,8 @@
+'use client';
+
+import { useEffect, useMemo } from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
 const METRIC_OPTIONS = [
   { key: 'clicks', label: 'Clicks', icon: '✦' },
@@ -14,15 +18,6 @@ const SORT_OPTIONS = [
   { key: 'growthPct', label: 'Growth %' },
 ] as const;
 
-const RANGE_OPTIONS = [
-  { key: '7', label: '7 days' },
-  { key: '14', label: '14 days' },
-  { key: '28', label: '28 days' },
-  { key: '90', label: '3 months' },
-  { key: '180', label: '6 months' },
-  { key: '365', label: '12 months' },
-] as const;
-
 const SEARCH_TYPES = [
   { key: 'web', label: 'Web' },
   { key: 'discover', label: 'Discover' },
@@ -31,36 +26,84 @@ const SEARCH_TYPES = [
   { key: 'video', label: 'Video' },
 ] as const;
 
-type MetricKey = 'clicks' | 'impressions' | 'ctr' | 'position';
+const RANGE_OPTIONS = [
+  { key: '7', label: '7 days' },
+  { key: '14', label: '14 days' },
+  { key: '28', label: '28 days' },
+  { key: '90', label: '90 days' },
+  { key: '180', label: '180 days' },
+  { key: '365', label: '1 year' },
+  { key: '730', label: '2 years' },
+] as const;
 
-type DashboardToolbarProps = {
-  search: string;
-  sort: string;
-  range: number;
-  searchType: string;
-  compare: boolean;
-  visibleMetrics: MetricKey[];
-};
+const STORAGE_KEY = 'gsk-dashboard-preferences';
+
+type MetricKey = (typeof METRIC_OPTIONS)[number]['key'];
 
 export function DashboardToolbar({
-  search,
-  sort,
-  range,
-  searchType,
   compare,
+  range,
+  search,
+  searchType,
+  sort,
   visibleMetrics,
-}: DashboardToolbarProps) {
-  const buildHref = (patch: Record<string, string | null>) => {
-    const params = new URLSearchParams();
-    if (search) params.set('q', search);
-    if (sort) params.set('sort', sort);
-    if (range) params.set('range', String(range));
-    if (searchType) params.set('searchType', searchType);
-    if (compare) params.set('compare', '1');
-    if (visibleMetrics.length) params.set('metrics', visibleMetrics.join(','));
+  endDate,
+}: {
+  compare: boolean;
+  range: number;
+  search: string;
+  searchType: string;
+  sort: string;
+  visibleMetrics: MetricKey[];
+  endDate: string;
+}) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
-    for (const [key, value] of Object.entries(patch)) {
-      if (value === null || value === '') {
+  const queryString = useMemo(() => searchParams.toString(), [searchParams]);
+
+  useEffect(() => {
+    const payload = {
+      range: String(range),
+      searchType,
+      endDate,
+      compare: compare ? '1' : '0',
+      metrics: visibleMetrics.join(','),
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  }, [range, searchType, endDate, compare, visibleMetrics]);
+
+  useEffect(() => {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+
+    try {
+      const stored = JSON.parse(raw) as Record<string, string>;
+      const params = new URLSearchParams(queryString);
+      let changed = false;
+
+      for (const key of ['range', 'searchType', 'endDate', 'compare', 'metrics'] as const) {
+        if (!params.get(key) && stored[key]) {
+          params.set(key, stored[key]);
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        const next = params.toString();
+        router.replace(next ? `${pathname}?${next}` : pathname);
+      }
+    } catch {
+      // ignore malformed local state
+    }
+  }, [pathname, queryString, router]);
+
+  function buildHref(nextValues: Partial<Record<string, string>>) {
+    const params = new URLSearchParams(queryString);
+
+    for (const [key, value] of Object.entries(nextValues)) {
+      if (!value) {
         params.delete(key);
       } else {
         params.set(key, value);
@@ -68,8 +111,8 @@ export function DashboardToolbar({
     }
 
     const query = params.toString();
-    return query ? `/dashboard?${query}` : '/dashboard';
-  };
+    return query ? `${pathname}?${query}` : pathname;
+  }
 
   const toggleMetricHref = (metric: MetricKey) => {
     const current = new Set(visibleMetrics);
@@ -89,6 +132,7 @@ export function DashboardToolbar({
           <input defaultValue={search} name="q" placeholder="Search" type="search" />
           <input type="hidden" name="sort" value={sort} />
           <input type="hidden" name="range" value={range} />
+          <input type="hidden" name="endDate" value={endDate} />
           <input type="hidden" name="searchType" value={searchType} />
           <input type="hidden" name="compare" value={compare ? '1' : '0'} />
           <input type="hidden" name="metrics" value={visibleMetrics.join(',')} />
@@ -155,6 +199,16 @@ export function DashboardToolbar({
               <span>{metric.icon}</span>
             </Link>
           ))}
+        </div>
+
+        <div className="date-control-inline">
+          <label htmlFor="dashboard-end-date">End date</label>
+          <input
+            id="dashboard-end-date"
+            type="date"
+            value={endDate}
+            onChange={(event) => router.push(buildHref({ endDate: event.target.value }))}
+          />
         </div>
 
         <details className="toolbar-menu">

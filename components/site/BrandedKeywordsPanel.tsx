@@ -2,76 +2,62 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-type BrandRow = {
+type QueryRow = {
   key: string;
   clicks: number;
   previousClicks: number;
 };
-
-const STORAGE_PREFIX = 'gsc-branded-keywords:';
 
 export function BrandedKeywordsPanel({
   propertyId,
   rows,
 }: {
   propertyId: string;
-  rows: BrandRow[];
+  rows: QueryRow[];
 }) {
-  const storageKey = `${STORAGE_PREFIX}${propertyId}`;
-  const [input, setInput] = useState('');
-  const [keywords, setKeywords] = useState<string[]>([]);
+  const storageKey = `gsc-branded-keywords:${propertyId}`;
+  const [keywords, setKeywords] = useState('');
+  const [draft, setDraft] = useState('');
+  const [editing, setEditing] = useState(false);
 
   useEffect(() => {
-    const raw = window.localStorage.getItem(storageKey);
-    if (!raw) return;
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        setKeywords(parsed.filter((item) => typeof item === 'string'));
-      }
-    } catch {
-      // ignore
-    }
+    const stored = window.localStorage.getItem(storageKey) || '';
+    setKeywords(stored);
+    setDraft(stored);
   }, [storageKey]);
 
-  useEffect(() => {
-    window.localStorage.setItem(storageKey, JSON.stringify(keywords));
-  }, [keywords, storageKey]);
+  const parsed = useMemo(
+    () => keywords.split(',').map((value) => value.trim().toLowerCase()).filter(Boolean),
+    [keywords]
+  );
 
-  const branded = useMemo(() => {
-    if (!keywords.length) return [];
-    const normalized = keywords.map((item) => item.toLowerCase());
-    return rows.filter((row) =>
-      normalized.some((keyword) => row.key.toLowerCase().includes(keyword))
-    );
-  }, [rows, keywords]);
+  const summary = useMemo(() => {
+    if (!parsed.length) return null;
+    const branded = rows.filter((row) => parsed.some((keyword) => row.key.toLowerCase().includes(keyword)));
+    const brandedClicks = branded.reduce((acc, row) => acc + row.clicks, 0);
+    const brandedPrevious = branded.reduce((acc, row) => acc + row.previousClicks, 0);
+    const totalClicks = rows.reduce((acc, row) => acc + row.clicks, 0);
+    const totalPrevious = rows.reduce((acc, row) => acc + row.previousClicks, 0);
+    const nonBrandedClicks = Math.max(totalClicks - brandedClicks, 0);
+    const nonBrandedPrevious = Math.max(totalPrevious - brandedPrevious, 0);
 
-  const brandedClicks = branded.reduce((acc, row) => acc + row.clicks, 0);
-  const brandedPrevClicks = branded.reduce((acc, row) => acc + row.previousClicks, 0);
-  const change =
-    !brandedPrevClicks && !brandedClicks
-      ? 0
-      : !brandedPrevClicks
-        ? 100
-        : ((brandedClicks - brandedPrevClicks) / brandedPrevClicks) * 100;
+    return {
+      brandedClicks,
+      brandedPrevious,
+      nonBrandedClicks,
+      nonBrandedPrevious,
+    };
+  }, [parsed, rows]);
 
-  function addKeyword() {
-    const value = input.trim().toLowerCase();
-    if (!value) return;
-    if (keywords.includes(value)) {
-      setInput('');
-      return;
-    }
-    setKeywords((prev) => [...prev, value]);
-    setInput('');
-  }
-
-  function removeKeyword(keyword: string) {
-    setKeywords((prev) => prev.filter((item) => item !== keyword));
+  function saveKeywords() {
+    const next = draft.trim();
+    window.localStorage.setItem(storageKey, next);
+    setKeywords(next);
+    setEditing(false);
   }
 
   return (
-    <section className="panel site-detail-panel">
+    <section className="panel site-detail-panel branded-placeholder">
       <div className="mini-tabs">
         <h3>Branded vs non-branded clicks</h3>
         <div>
@@ -80,68 +66,79 @@ export function BrandedKeywordsPanel({
         </div>
       </div>
 
-      {!keywords.length ? (
+      {!summary ? (
         <div className="brand-placeholder-box">
           <div className="brand-placeholder-circle">B</div>
           <strong>Missing branded keywords</strong>
-          <p className="muted">
-            Define your brand keywords to enable this report.
-          </p>
+          <p className="muted">Define your brand keywords to enable this report for the current property.</p>
+          {editing ? (
+            <div className="branded-editor">
+              <textarea
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                placeholder="aviamasters, avia masters, avia-masters"
+              />
+              <div className="branded-editor-actions">
+                <button type="button" className="button small" onClick={saveKeywords}>
+                  Save
+                </button>
+                <button type="button" className="button ghost small" onClick={() => setEditing(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button type="button" className="mini-link-button" onClick={() => setEditing(true)}>
+              Define
+            </button>
+          )}
         </div>
       ) : (
-        <div className="brand-settings-summary">
-          <div className="brand-summary-card">
+        <div className="branded-summary-grid">
+          <div className="site-top-card">
             <span>Branded clicks</span>
-            <strong>{formatInt(brandedClicks)}</strong>
-            <em className={change >= 0 ? 'good' : 'bad'}>
-              {change > 0 ? '+' : ''}
-              {change.toFixed(1)}%
+            <strong>{summary.brandedClicks.toLocaleString('en-US')}</strong>
+            <em className={summary.brandedClicks - summary.brandedPrevious >= 0 ? 'good' : 'bad'}>
+              {formatPercent(summary.brandedClicks, summary.brandedPrevious)}
             </em>
           </div>
-
-          <div className="brand-keywords-cloud">
-            {keywords.map((keyword) => (
-              <button
-                key={keyword}
-                type="button"
-                className="brand-pill"
-                onClick={() => removeKeyword(keyword)}
-              >
-                {keyword} ×
-              </button>
-            ))}
+          <div className="site-top-card">
+            <span>Non-branded clicks</span>
+            <strong>{summary.nonBrandedClicks.toLocaleString('en-US')}</strong>
+            <em className={summary.nonBrandedClicks - summary.nonBrandedPrevious >= 0 ? 'good' : 'bad'}>
+              {formatPercent(summary.nonBrandedClicks, summary.nonBrandedPrevious)}
+            </em>
+          </div>
+          <div className="brand-keywords-list">
+            <span className="muted">Keywords</span>
+            <p>{parsed.join(', ')}</p>
+            <button type="button" className="mini-link-button" onClick={() => setEditing((value) => !value)}>
+              {editing ? 'Close settings' : 'Settings'}
+            </button>
+            {editing ? (
+              <div className="branded-editor">
+                <textarea value={draft} onChange={(event) => setDraft(event.target.value)} />
+                <div className="branded-editor-actions">
+                  <button type="button" className="button small" onClick={saveKeywords}>
+                    Save
+                  </button>
+                  <button type="button" className="button ghost small" onClick={() => setEditing(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       )}
-
-      <div className="brand-settings-box">
-        <div className="brand-settings-title">Branded keywords settings</div>
-        <div className="brand-settings-row">
-          <input
-            className="brand-input"
-            type="text"
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            placeholder="Add keyword, domain, or brand phrase"
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                addKeyword();
-              }
-            }}
-          />
-          <button type="button" className="button small" onClick={addKeyword}>
-            Add
-          </button>
-        </div>
-        <p className="muted small-text">
-          Keywords are currently saved in this browser only for this property.
-        </p>
-      </div>
     </section>
   );
 }
 
-function formatInt(value: number) {
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
+function formatPercent(current: number, previous: number) {
+  if (!previous && !current) return '0.0%';
+  if (!previous && current > 0) return '+100.0%';
+  const delta = ((current - previous) / previous) * 100;
+  const sign = delta > 0 ? '+' : '';
+  return `${sign}${delta.toFixed(1)}%`;
 }

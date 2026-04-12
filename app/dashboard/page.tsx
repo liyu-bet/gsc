@@ -1,7 +1,8 @@
 import { addDays, differenceInCalendarDays, format, parseISO } from 'date-fns';
+import { unstable_cache } from 'next/cache';
 import { requireAdmin } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { defaultDateRange, querySite } from '@/lib/google';
+import { defaultDateRange, latestAvailableDate, querySite } from '@/lib/google';
 import { formatDecimal, formatNumber, formatPercent } from '@/lib/format';
 import { DashboardToolbar } from '@/components/DashboardToolbar';
 import { PortfolioCard } from '@/components/PortfolioCard';
@@ -36,6 +37,52 @@ const VALID_METRICS = new Set<MetricKey>(DEFAULT_METRICS);
 const VALID_SEARCH_TYPES = new Set<SearchType>(['web', 'discover', 'news', 'image', 'video']);
 const VALID_SORTS = new Set(['az', 'total', 'growth', 'growthPct']);
 
+const getCachedSiteCardData = unstable_cache(
+  async (
+    propertyId: string,
+    connectionId: string,
+    siteUrl: string,
+    rangeDays: number,
+    searchType: SearchType,
+    endDate: string
+  ) => {
+    const range = defaultDateRange(rangeDays, endDate);
+    const alignedDatesCurrent = enumerateDates(range.startDate, range.endDate);
+    const alignedDatesPrevious = enumerateDates(range.previousStartDate, range.previousEndDate);
+
+    const requestBase = {
+      dataState: 'all',
+      dimensions: ['date'],
+      rowLimit: rangeDays + 5,
+      ...(searchType !== 'web' ? { type: searchType } : {}),
+    };
+
+    const [current, previous] = await Promise.all([
+      querySite(connectionId, siteUrl, {
+        startDate: range.startDate,
+        endDate: range.endDate,
+        ...requestBase,
+      }),
+      querySite(connectionId, siteUrl, {
+        startDate: range.previousStartDate,
+        endDate: range.previousEndDate,
+        ...requestBase,
+      }),
+    ]);
+
+    const currentRows = alignDailyRows(alignedDatesCurrent, current.rows || []);
+    const previousRows = alignDailyRows(alignedDatesPrevious, previous.rows || []);
+
+    return {
+      currentSeries: buildSeries(currentRows),
+      previousSeries: buildSeries(previousRows),
+      metrics: buildMetricSnapshots(currentRows, previousRows),
+    };
+  },
+  ['dashboard-site-cards'],
+  { revalidate: 300 }
+);
+
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -47,6 +94,7 @@ export default async function DashboardPage({
     metrics?: string;
     searchType?: string;
     compare?: string;
+    endDate?: string;
   }>;
 }) {
   await requireAdmin();
@@ -60,6 +108,7 @@ export default async function DashboardPage({
     : 'web';
   const compare = params.compare !== '0';
   const visibleMetrics = parseVisibleMetrics(params.metrics);
+  const endDate = normalizeEndDate(params.endDate);
 
   const connections = await prisma.googleConnection.findMany({
     include: {
@@ -91,44 +140,30 @@ export default async function DashboardPage({
     );
   });
 
-  const range = defaultDateRange(rangeDays);
-  const alignedDatesCurrent = enumerateDates(range.startDate, range.endDate);
-  const alignedDatesPrevious = enumerateDates(range.previousStartDate, range.previousEndDate);
+  const range = defaultDateRange(rangeDays, endDate);
 
   const siteCards = await Promise.all(
     filteredProperties.map(async (property): Promise<SiteCardData> => {
       try {
-        const requestBase = {
-          dataState: 'all',
-          dimensions: ['date'],
-          rowLimit: rangeDays + 5,
-          ...(searchType !== 'web' ? { type: searchType } : {}),
-        };
-
-        const [current, previous] = await Promise.all([
-          querySite(property.connectionId, property.siteUrl, {
-            startDate: range.startDate,
-            endDate: range.endDate,
-            ...requestBase,
-          }),
-          querySite(property.connectionId, property.siteUrl, {
-            startDate: range.previousStartDate,
-            endDate: range.previousEndDate,
-            ...requestBase,
-          }),
-        ]);
-
-        const currentRows = alignDailyRows(alignedDatesCurrent, current.rows || []);
-        const previousRows = alignDailyRows(alignedDatesPrevious, previous.rows || []);
+        const data = await getCachedSiteCardData(
+          property.id,
+          property.connectionId,
+          property.siteUrl,
+          rangeDays,
+          searchType,
+          endDate
+        );
 
         return {
           ...property,
-          currentSeries: buildSeries(currentRows),
-          previousSeries: buildSeries(previousRows),
-          metrics: buildMetricSnapshots(currentRows, previousRows),
+          currentSeries: data.currentSeries,
+          previousSeries: data.previousSeries,
+          metrics: data.metrics,
           error: null,
         };
       } catch (error) {
+        const alignedDatesCurrent = enumerateDates(range.startDate, range.endDate);
+        const alignedDatesPrevious = enumerateDates(range.previousStartDate, range.previousEndDate);
         return {
           ...property,
           currentSeries: emptySeries(alignedDatesCurrent.length),
@@ -152,6 +187,7 @@ export default async function DashboardPage({
 
       <DashboardToolbar
         compare={compare}
+        endDate={endDate}
         range={rangeDays}
         search={search}
         searchType={searchType}
@@ -184,7 +220,9 @@ export default async function DashboardPage({
             {formatSignedDecimal(portfolioSummary.position.previous - portfolioSummary.position.current, 1)} position
           </span>
         </div>
-        <div className="small-text">{range.startDate} → {range.endDate} · Recent Search Console data can still update.</div>
+        <div className="small-text">
+          {range.startDate} → {range.endDate} · Last available date: {endDate}
+        </div>
       </section>
 
       {sortedSites.length === 0 ? (
@@ -199,6 +237,7 @@ export default async function DashboardPage({
           {sortedSites.map((site) => (
             <PortfolioCard
               compare={compare}
+              connectionEmail={site.connectionEmail}
               currentSeries={site.currentSeries}
               error={site.error}
               id={site.id}
@@ -206,6 +245,7 @@ export default async function DashboardPage({
               label={site.label}
               metrics={site.metrics}
               previousSeries={site.previousSeries}
+              rangeLabel={`${range.startDate} → ${range.endDate}`}
               siteUrl={site.siteUrl}
               visibleMetrics={visibleMetrics}
             />
@@ -254,7 +294,7 @@ export default async function DashboardPage({
           )}
         </section>
 
-        <section className="panel panel-compact">
+        <section className="panel panel-compact sites-scroll-panel">
           <div className="panel-header">
             <div>
               <h3>Selected properties</h3>
@@ -264,7 +304,7 @@ export default async function DashboardPage({
           {selectedProperties.length === 0 ? (
             <EmptyState title="No selected properties" text="Keep at least one property enabled to see it in the portfolio view." />
           ) : (
-            <div className="properties-list compact-list">
+            <div className="properties-list compact-list sites-scroll-list">
               {selectedProperties.map((property) => (
                 <div className="property-row" key={property.id}>
                   <div>
@@ -294,7 +334,14 @@ function clampRange(value?: string) {
   if (parsed <= 28) return 28;
   if (parsed <= 90) return 90;
   if (parsed <= 180) return 180;
-  return 365;
+  if (parsed <= 365) return 365;
+  return 730;
+}
+
+function normalizeEndDate(value?: string) {
+  if (!value) return latestAvailableDate();
+  const date = parseISO(value);
+  return Number.isNaN(date.getTime()) ? latestAvailableDate() : format(date, 'yyyy-MM-dd');
 }
 
 function parseVisibleMetrics(value?: string): MetricKey[] {

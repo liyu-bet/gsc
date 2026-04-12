@@ -1,29 +1,76 @@
 'use client';
 
+import { useEffect, useMemo } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
 const RANGE_OPTIONS = [7, 14, 28, 90, 180, 365, 730];
 const SEARCH_TYPES = ['web', 'discover', 'news', 'image', 'video'] as const;
+const STORAGE_KEY = 'gsk-site-workspace-preferences';
 
 export function SiteControls({
   currentRange,
   currentSearchType,
+  currentEndDate,
 }: {
   currentRange: number;
   currentSearchType: string;
+  currentEndDate: string;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const queryString = useMemo(() => searchParams.toString(), [searchParams]);
+
+  useEffect(() => {
+    const payload = {
+      range: String(currentRange),
+      searchType: currentSearchType,
+      endDate: currentEndDate,
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  }, [currentRange, currentSearchType, currentEndDate]);
+
+  useEffect(() => {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    try {
+      const stored = JSON.parse(raw) as Record<string, string>;
+      const params = new URLSearchParams(queryString);
+      let changed = false;
+      for (const key of ['range', 'searchType', 'endDate'] as const) {
+        if (!params.get(key) && stored[key]) {
+          params.set(key, stored[key]);
+          changed = true;
+        }
+      }
+      if (changed) {
+        const next = params.toString();
+        router.replace(next ? `${pathname}?${next}` : pathname);
+      }
+    } catch {
+      // ignore broken storage
+    }
+  }, [pathname, queryString, router]);
 
   function updateParam(name: string, value: string) {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = new URLSearchParams(queryString);
     params.set(name, value);
     router.push(`${pathname}?${params.toString()}`);
   }
 
   return (
     <div className="site-controls">
+      <div className="site-control-group">
+        <label htmlFor="site-end-date">End date</label>
+        <input
+          id="site-end-date"
+          className="site-control-select"
+          type="date"
+          value={currentEndDate}
+          onChange={(event) => updateParam('endDate', event.target.value)}
+        />
+      </div>
+
       <div className="site-control-group">
         <label htmlFor="site-range">Period</label>
         <select

@@ -1,5 +1,5 @@
 import { GoogleConnection } from '@prisma/client';
-import { addMinutes, format, subDays } from 'date-fns';
+import { addMinutes, format, isValid, parseISO, subDays } from 'date-fns';
 import { decrypt, encrypt } from './security';
 import { env } from './env';
 import { prisma } from './prisma';
@@ -45,6 +45,10 @@ const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo';
 const GSC_BASE = 'https://www.googleapis.com/webmasters/v3';
+
+export function latestAvailableDate(): string {
+  return format(subDays(new Date(), 2), 'yyyy-MM-dd');
+}
 
 export function buildGoogleAuthUrl(state: string): string {
   const params = new URLSearchParams({
@@ -166,7 +170,6 @@ export async function syncSitesForConnection(connectionId: string): Promise<numb
     where: { id: connectionId },
     include: { properties: true },
   });
-
   if (!connection) {
     throw new Error('Connection not found');
   }
@@ -277,13 +280,14 @@ export async function querySite(connectionId: string, siteUrl: string, body: Rec
   return response.json() as Promise<SearchAnalyticsResponse>;
 }
 
-export function defaultDateRange(days = 28): {
+export function defaultDateRange(days = 28, endDateInput?: string): {
   startDate: string;
   endDate: string;
   previousStartDate: string;
   previousEndDate: string;
 } {
-  const end = subDays(new Date(), 1);
+  const requestedEnd = endDateInput ? parseISO(endDateInput) : null;
+  const end = requestedEnd && isValid(requestedEnd) ? requestedEnd : parseISO(latestAvailableDate());
   const start = subDays(end, days - 1);
   const previousEnd = subDays(start, 1);
   const previousStart = subDays(previousEnd, days - 1);

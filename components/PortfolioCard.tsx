@@ -1,4 +1,7 @@
+'use client';
+
 import Link from 'next/link';
+import { useMemo, useState } from 'react';
 import { formatDecimal, formatNumber, formatPercent } from '@/lib/format';
 
 type MetricKey = 'clicks' | 'impressions' | 'ctr' | 'position';
@@ -20,6 +23,8 @@ type PortfolioCardProps = {
   previousSeries: Record<MetricKey, number[]>;
   compare: boolean;
   error?: string | null;
+  connectionEmail?: string;
+  rangeLabel?: string;
 };
 
 const METRIC_META: Record<MetricKey, { label: string; icon: string; color: string }> = {
@@ -39,21 +44,48 @@ export function PortfolioCard({
   previousSeries,
   compare,
   error,
+  connectionEmail,
+  rangeLabel,
 }: PortfolioCardProps) {
+  const [hovered, setHovered] = useState(false);
   const chart = buildChartPaths(visibleMetrics, currentSeries, previousSeries, compare);
+  const faviconUrl = useMemo(() => {
+    try {
+      const domain = new URL(siteUrl).hostname;
+      return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`;
+    } catch {
+      return '';
+    }
+  }, [siteUrl]);
 
   return (
-    <article className="portfolio-card panel panel-compact">
+    <article
+      className="portfolio-card panel panel-compact"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       <div className="portfolio-title-row">
         <div className="portfolio-title-wrap">
-          <span aria-hidden="true" className="site-avatar">
-            {label.slice(0, 1).toUpperCase()}
-          </span>
-          <Link className="portfolio-title" href={`/sites/${id}`}>
+          {faviconUrl ? (
+            <img
+              src={faviconUrl}
+              alt=""
+              aria-hidden="true"
+              className="site-favicon"
+              onError={(event) => {
+                (event.currentTarget as HTMLImageElement).style.display = 'none';
+              }}
+            />
+          ) : (
+            <span aria-hidden="true" className="site-avatar">
+              {label.slice(0, 1).toUpperCase()}
+            </span>
+          )}
+          <Link className="portfolio-title" href={`/sites/${id}`} prefetch>
             {siteUrl}
           </Link>
         </div>
-        <Link className="open-arrow" href={`/sites/${id}`}>
+        <Link className="open-arrow" href={`/sites/${id}`} prefetch>
           →
         </Link>
       </div>
@@ -103,11 +135,38 @@ export function PortfolioCard({
       <div className="portfolio-actions-row">
         <span className="small-text">{label}</span>
         <div className="portfolio-actions-mini">
-          <Link className="mini-link" href={`/sites/${id}`}>
+          <Link className="mini-link" href={`/sites/${id}`} prefetch>
             Open
           </Link>
         </div>
       </div>
+
+      {hovered ? (
+        <div className="portfolio-hover-card">
+          <div className="portfolio-hover-head">
+            <strong>{label}</strong>
+            <span>{rangeLabel || 'Current range'}</span>
+          </div>
+          <div className="portfolio-hover-grid">
+            {visibleMetrics.map((metricKey) => {
+              const snapshot = metrics[metricKey];
+              const meta = METRIC_META[metricKey];
+              const positive = metricKey === 'position' ? snapshot.delta <= 0 : snapshot.delta >= 0;
+              return (
+                <div key={metricKey} className="portfolio-hover-row">
+                  <div>
+                    <i style={{ backgroundColor: meta.color }} />
+                    <span>{meta.label}</span>
+                  </div>
+                  <strong>{formatMetricValue(metricKey, snapshot.current)}</strong>
+                  <span className={positive ? 'good' : 'bad'}>{formatDelta(metricKey, snapshot)}</span>
+                </div>
+              );
+            })}
+          </div>
+          {connectionEmail ? <div className="small-text muted">{connectionEmail}</div> : null}
+        </div>
+      ) : null}
 
       {error ? <div className="small-text bad">{error}</div> : null}
     </article>
