@@ -191,6 +191,11 @@ const COUNTRY_MAP: Record<string, string> = {
   yem: 'Yemen',
   zmb: 'Zambia',
   zwe: 'Zimbabwe',
+  mac: 'Macao',
+  hkg: 'Hong Kong',
+  vir: 'U.S. Virgin Islands',
+  xkk: 'Kosovo',
+  zzz: 'Unknown Region',
 };
 
 export function countryName(code: string) {
