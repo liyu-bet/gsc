@@ -1,0 +1,6 @@
+# Подключает готовый образ с GitHub (ghcr.io) вместо сборки на сервере.
+# Запуск: docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull && docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
+services:
+  app:
+    image: ghcr.io/liyu-bet/gsc-app:latest
+    build: null

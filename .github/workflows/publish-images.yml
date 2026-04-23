@@ -1,0 +1,70 @@
+# Сборка образа app и публикация в ghcr.io; деплой на VPS (секреты: SSH_HOST, SSH_USER, SSH_PRIVATE_KEY)
+
+name: Publish Docker image
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_APP: ghcr.io/liyu-bet/gsc-app
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Short SHA
+        id: sha
+        run: echo "short=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_APP }}:latest
+            ${{ env.IMAGE_APP }}:${{ steps.sha.outputs.short }}
+          build-args: |
+            DATABASE_URL=postgresql://gsc:build@127.0.0.1:5432/gsc_dashboard
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy on server
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    steps:
+      - name: Pull image and restart stack
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            cd /var/www/gsc
+            docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
+            docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
+          script_stop: true

@@ -8,6 +8,9 @@ COPY prisma ./prisma
 RUN npm install
 
 FROM base AS builder
+# Нужен для prisma generate / next build в CI (реальная БД не используется на этапе сборки)
+ARG DATABASE_URL=postgresql://gsc:build@127.0.0.1:5432/gsc_dashboard
+ENV DATABASE_URL=$DATABASE_URL
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
