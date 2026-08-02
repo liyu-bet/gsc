@@ -231,13 +231,28 @@ select {
 
 .accounts-control {
   display: flex;
-  gap: 8px;
   align-items: center;
-  flex-wrap: wrap;
+}
+
+.accounts-combo {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  overflow: visible;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.02);
+}
+
+.accounts-combo:focus-within {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
 }
 
 .accounts-select {
   position: relative;
+  min-width: 0;
 }
 
 .accounts-select-summary {
@@ -245,12 +260,13 @@ select {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-width: 220px;
-  max-width: 320px;
+  min-width: 200px;
+  max-width: 280px;
+  height: 100%;
   padding: 9px 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: #fff;
+  border: 0;
+  border-radius: 14px 0 0 14px;
+  background: transparent;
   cursor: pointer;
   user-select: none;
 }
@@ -273,9 +289,20 @@ select {
   font-size: 0.8rem;
 }
 
-.accounts-select[open] .accounts-select-summary {
-  border-color: #93c5fd;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+.accounts-combo-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 6px 0;
+  background: var(--line);
+}
+
+.accounts-sync-all-form {
+  display: flex;
+}
+
+.accounts-sync-all-btn {
+  width: 40px;
+  border-radius: 0 13px 13px 0;
 }
 
 .accounts-select-menu {
@@ -311,7 +338,7 @@ select {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  align-items: flex-start;
+  align-items: center;
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -333,13 +360,43 @@ select {
 
 .accounts-list-actions {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
-.accounts-control button:disabled {
-  opacity: 0.55;
+.accounts-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #334155;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.accounts-icon-btn:hover {
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+}
+
+.accounts-icon-btn-danger:hover {
+  background: rgba(220, 38, 38, 0.08);
+  color: #dc2626;
+}
+
+.accounts-icon-btn:disabled {
+  opacity: 0.45;
   cursor: not-allowed;
+}
+
+.accounts-icon-btn:disabled:hover {
+  background: transparent;
+  color: #334155;
 }
 
 .panel {
@@ -768,6 +825,15 @@ tbody td {
     align-items: flex-start;
   }
 
+  .accounts-control,
+  .accounts-combo {
+    width: 100%;
+  }
+
+  .accounts-select {
+    flex: 1;
+  }
+
   .accounts-select-summary {
     min-width: 0;
     width: 100%;
@@ -780,17 +846,9 @@ tbody td {
     width: auto;
   }
 
-  .accounts-control {
-    width: 100%;
-  }
-
-  .accounts-control form,
-  .accounts-control .accounts-select {
-    flex: 1;
-  }
-
-  .accounts-control button {
-    width: 100%;
+  .accounts-list-item {
+    flex-direction: row;
+    align-items: center;
   }
 }
 
