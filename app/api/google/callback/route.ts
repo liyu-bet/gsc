@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
 
   if (!code || !state || !storedState || state !== storedState) {
     return NextResponse.redirect(
-      appUrl('/dashboard?google_error=invalid_state')
+      appUrl('/dashboard?google_error=' + encodeURIComponent('Неверный OAuth state'))
     );
   }
 
@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
     response.cookies.delete('google_oauth_state');
     return response;
   } catch (e) {
-    const message = e instanceof Error ? e.message : 'google_callback_failed';
+    const message = e instanceof Error ? e.message : 'Ошибка callback Google OAuth';
     return NextResponse.redirect(
       appUrl(`/dashboard?google_error=${encodeURIComponent(message)}`)
     );

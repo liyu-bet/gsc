@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { rangeLabel, searchTypeLabel } from '@/lib/ui-labels';
 
 const RANGE_OPTIONS = [1, 7, 14, 28, 90, 180, 365, 730];
 const SEARCH_TYPES = ['web', 'discover', 'news', 'image', 'video'] as const;
@@ -91,7 +92,7 @@ export function SiteControls({
     <div className="site-controls-wrap">
       <div className="site-controls">
         <div className="site-control-group">
-          <label htmlFor="site-end-date">End date</label>
+          <label htmlFor="site-end-date">Дата окончания</label>
           <input
             id="site-end-date"
             className="site-control-select"
@@ -99,11 +100,11 @@ export function SiteControls({
             value={currentEndDate}
             onChange={(event) => updateParams({ endDate: event.target.value })}
           />
-          <span className="site-last-date-note">Last available: {latestDate}</span>
+          <span className="site-last-date-note">Последняя доступная: {latestDate}</span>
         </div>
 
         <div className="site-control-group">
-          <label htmlFor="site-range">Period</label>
+          <label htmlFor="site-range">Период</label>
           <select
             id="site-range"
             className="site-control-select"
@@ -118,18 +119,14 @@ export function SiteControls({
           >
             {RANGE_OPTIONS.map((days) => (
               <option key={days} value={String(days)}>
-                {days === 1
-                  ? '1 day'
-                  : days >= 365
-                    ? `${Math.round(days / 365)} year${days >= 730 ? 's' : ''}`
-                    : `${days} days`}
+                {rangeLabel(days)}
               </option>
             ))}
           </select>
         </div>
 
         <div className="site-control-group">
-          <label htmlFor="site-search-type">Search type</label>
+          <label htmlFor="site-search-type">Тип поиска</label>
           <select
             id="site-search-type"
             className="site-control-select"
@@ -138,20 +135,20 @@ export function SiteControls({
           >
             {SEARCH_TYPES.map((type) => (
               <option key={type} value={type}>
-                {type.charAt(0).toUpperCase() + type.slice(1)}
+                {searchTypeLabel(type)}
               </option>
             ))}
           </select>
         </div>
 
         <div className="site-control-group">
-          <label>Custom range</label>
+          <label>Свой период</label>
           <button
             type="button"
             className={`button ghost small ${customOpen ? 'active-filter-button' : ''}`}
             onClick={() => setCustomOpen((value) => !value)}
           >
-            {customOpen ? 'Hide custom range' : 'Show custom range'}
+            {customOpen ? 'Скрыть свой период' : 'Показать свой период'}
           </button>
         </div>
       </div>
@@ -159,7 +156,7 @@ export function SiteControls({
       {customOpen ? (
         <div className="site-controls site-controls-custom">
           <div className="site-control-group">
-            <label htmlFor="site-start-date">Start date</label>
+            <label htmlFor="site-start-date">Дата начала</label>
             <input
               id="site-start-date"
               className="site-control-select"
@@ -170,7 +167,7 @@ export function SiteControls({
           </div>
 
           <div className="site-control-group">
-            <label>Apply</label>
+            <label>Применить</label>
             <button
               type="button"
               className="button small"
@@ -181,7 +178,7 @@ export function SiteControls({
                 })
               }
             >
-              Apply custom range
+              Применить свой период
             </button>
           </div>
         </div>

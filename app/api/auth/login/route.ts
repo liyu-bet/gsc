@@ -9,13 +9,13 @@ export async function POST(request: NextRequest) {
     const password = String(formData.get('password') || '');
 
     if (!verifyAdminCredentials(email, password)) {
-      return NextResponse.redirect(appUrl('/login?error=Invalid%20credentials'), 303);
+      return NextResponse.redirect(appUrl('/login?error=' + encodeURIComponent('Неверный логин или пароль')), 303);
     }
 
     await setSessionCookie(email);
     return NextResponse.redirect(appUrl('/dashboard'), 303);
   } catch (error) {
     console.error('Login route failed:', error);
-    return NextResponse.redirect(appUrl('/login?error=Login%20failed'), 303);
+    return NextResponse.redirect(appUrl('/login?error=' + encodeURIComponent('Ошибка входа')), 303);
   }
 }

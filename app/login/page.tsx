@@ -17,11 +17,11 @@ export default async function LoginPage({
   return (
     <main className="auth-shell">
       <section className="auth-card">
-        <div className="badge">Self-hosted</div>
+        <div className="badge">Свой хостинг</div>
         <h1>{env.appName}</h1>
         <p className="muted">
-          One admin login for your app. After that, connect one or more Google Search Console accounts
-          inside the dashboard.
+          Один вход администратора. После входа подключите один или несколько аккаунтов Google Search
+          Console в панели.
         </p>
 
         {params.error ? <div className="alert error">{params.error}</div> : null}
@@ -32,11 +32,11 @@ export default async function LoginPage({
             <input type="email" name="email" placeholder="admin@example.com" required />
           </label>
           <label className="field">
-            <span>Password</span>
+            <span>Пароль</span>
             <input type="password" name="password" placeholder="••••••••" required />
           </label>
           <button className="button primary" type="submit">
-            Sign in
+            Войти
           </button>
         </form>
       </section>

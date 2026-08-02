@@ -168,7 +168,7 @@ export default async function DashboardPage({
           currentSeries: emptySeries(alignedDatesCurrent.length),
           previousSeries: emptySeries(alignedDatesPrevious.length),
           metrics: emptyMetrics(),
-          error: error instanceof Error ? error.message : 'Unknown API error',
+          error: error instanceof Error ? error.message : 'Неизвестная ошибка API',
         };
       }
     })
@@ -182,7 +182,7 @@ export default async function DashboardPage({
     <main className="page-shell seo-shell">
       <AppHeader compact />
 
-      {params.google_error ? <div className="alert error">Google connection error: {params.google_error}</div> : null}
+      {params.google_error ? <div className="alert error">Ошибка подключения Google: {params.google_error}</div> : null}
 
       <DashboardToolbar
         compare={compare}
@@ -198,31 +198,31 @@ export default async function DashboardPage({
         <div>
           <strong>{formatNumber(portfolioSummary.clicks.current)}</strong>
           <span className={portfolioSummary.clicks.deltaPct >= 0 ? 'good' : 'bad'}>
-            {formatSignedPercent(portfolioSummary.clicks.deltaPct)} clicks
+            {formatSignedPercent(portfolioSummary.clicks.deltaPct)} кликов
           </span>
         </div>
         <div>
           <strong>{compactNumber(portfolioSummary.impressions.current)}</strong>
           <span className={portfolioSummary.impressions.deltaPct >= 0 ? 'good' : 'bad'}>
-            {formatSignedPercent(portfolioSummary.impressions.deltaPct)} impressions
+            {formatSignedPercent(portfolioSummary.impressions.deltaPct)} показов
           </span>
         </div>
         <div>
           <strong>{formatDecimal(portfolioSummary.position.current, 1)}</strong>
           <span className={portfolioSummary.position.delta <= 0 ? 'good' : 'bad'}>
-            {formatSignedDecimal(portfolioSummary.position.previous - portfolioSummary.position.current, 1)} position
+            {formatSignedDecimal(portfolioSummary.position.previous - portfolioSummary.position.current, 1)} позиции
           </span>
         </div>
         <div className="small-text">
-          {range.startDate} → {range.endDate} · Last available date: {endDate}
+          {range.startDate} → {range.endDate} · Последняя доступная дата: {endDate}
         </div>
       </section>
 
       {sortedSites.length === 0 ? (
         <section className="panel">
           <EmptyState
-            title="No properties match this view"
-            text="Adjust the search, range, or filters and your selected Search Console properties will appear here."
+            title="Нет ресурсов для этого вида"
+            text="Измените поиск, период или фильтры — здесь появятся выбранные ресурсы Search Console."
           />
         </section>
       ) : (
@@ -250,14 +250,14 @@ export default async function DashboardPage({
         <section className="panel panel-compact">
           <div className="panel-header">
             <div>
-              <h3>Connected Google accounts</h3>
-              <p className="muted">Refresh, remove, and manage imported properties from here.</p>
+              <h3>Подключённые аккаунты Google</h3>
+              <p className="muted">Обновляйте, удаляйте и управляйте импортированными ресурсами здесь.</p>
             </div>
           </div>
           {connections.length === 0 ? (
             <EmptyState
-              title="No Google accounts connected yet"
-              text="Click “Connect Google account”, authorize access, and your available Search Console properties will appear here."
+              title="Аккаунты Google ещё не подключены"
+              text="Нажмите «Подключить аккаунт Google», подтвердите доступ — и доступные ресурсы Search Console появятся здесь."
             />
           ) : (
             <div className="stack-lg">
@@ -271,12 +271,12 @@ export default async function DashboardPage({
                     <div className="header-actions">
                       <form action={`/api/connections/${connection.id}/sync`} method="post">
                         <button className="button small" type="submit">
-                          Refresh sites
+                          Обновить сайты
                         </button>
                       </form>
                       <form action={`/api/connections/${connection.id}/delete`} method="post">
                         <button className="button ghost small" type="submit">
-                          Remove
+                          Удалить
                         </button>
                       </form>
                     </div>
@@ -290,12 +290,12 @@ export default async function DashboardPage({
         <section className="panel panel-compact sites-scroll-panel">
           <div className="panel-header">
             <div>
-              <h3>Selected properties</h3>
-              <p className="muted">Only enabled properties are shown in the portfolio grid above.</p>
+              <h3>Выбранные ресурсы</h3>
+              <p className="muted">В сетке портфеля выше показываются только включённые ресурсы.</p>
             </div>
           </div>
           {selectedProperties.length === 0 ? (
-            <EmptyState title="No selected properties" text="Keep at least one property enabled to see it in the portfolio view." />
+            <EmptyState title="Нет выбранных ресурсов" text="Включите хотя бы один ресурс, чтобы видеть его в портфеле." />
           ) : (
             <div className="properties-list compact-list sites-scroll-list">
               {selectedProperties.map((property) => (
@@ -306,7 +306,7 @@ export default async function DashboardPage({
                   </div>
                   <div className="property-actions">
                     <a className="button ghost small" href={`/sites/${property.id}`}>
-                      Open
+                      Открыть
                     </a>
                   </div>
                 </div>

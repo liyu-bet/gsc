@@ -1,11 +1,13 @@
+const NUMBER_LOCALE = 'ru-RU';
+
 export function formatNumber(value: number): string {
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat(NUMBER_LOCALE, {
     maximumFractionDigits: 0,
   }).format(value || 0);
 }
 
 export function formatDecimal(value: number, digits = 2): string {
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat(NUMBER_LOCALE, {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   }).format(value || 0);

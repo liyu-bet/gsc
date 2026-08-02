@@ -59,18 +59,18 @@ export function BrandedKeywordsPanel({
   return (
     <section className="panel site-detail-panel branded-placeholder">
       <div className="mini-tabs">
-        <h3>Branded vs non-branded clicks</h3>
+        <h3>Брендовые и небрендовые клики</h3>
         <div>
-          <span className="mini-tab active">Trend</span>
-          <span className="mini-tab">Comparison</span>
+          <span className="mini-tab active">Тренд</span>
+          <span className="mini-tab">Сравнение</span>
         </div>
       </div>
 
       {!summary ? (
         <div className="brand-placeholder-box">
           <div className="brand-placeholder-circle">B</div>
-          <strong>Missing branded keywords</strong>
-          <p className="muted">Define your brand keywords to enable this report for the current property.</p>
+          <strong>Не заданы брендовые ключевые слова</strong>
+          <p className="muted">Укажите бренд-запросы, чтобы включить этот отчёт для текущего ресурса.</p>
           {editing ? (
             <div className="branded-editor">
               <textarea
@@ -80,50 +80,50 @@ export function BrandedKeywordsPanel({
               />
               <div className="branded-editor-actions">
                 <button type="button" className="button small" onClick={saveKeywords}>
-                  Save
+                  Сохранить
                 </button>
                 <button type="button" className="button ghost small" onClick={() => setEditing(false)}>
-                  Cancel
+                  Отмена
                 </button>
               </div>
             </div>
           ) : (
             <button type="button" className="mini-link-button" onClick={() => setEditing(true)}>
-              Define
+              Задать
             </button>
           )}
         </div>
       ) : (
         <div className="branded-summary-grid">
           <div className="site-top-card">
-            <span>Branded clicks</span>
-            <strong>{summary.brandedClicks.toLocaleString('en-US')}</strong>
+            <span>Брендовые клики</span>
+            <strong>{summary.brandedClicks.toLocaleString('ru-RU')}</strong>
             <em className={summary.brandedClicks - summary.brandedPrevious >= 0 ? 'good' : 'bad'}>
               {formatPercent(summary.brandedClicks, summary.brandedPrevious)}
             </em>
           </div>
           <div className="site-top-card">
-            <span>Non-branded clicks</span>
-            <strong>{summary.nonBrandedClicks.toLocaleString('en-US')}</strong>
+            <span>Небрендовые клики</span>
+            <strong>{summary.nonBrandedClicks.toLocaleString('ru-RU')}</strong>
             <em className={summary.nonBrandedClicks - summary.nonBrandedPrevious >= 0 ? 'good' : 'bad'}>
               {formatPercent(summary.nonBrandedClicks, summary.nonBrandedPrevious)}
             </em>
           </div>
           <div className="brand-keywords-list">
-            <span className="muted">Keywords</span>
+            <span className="muted">Ключевые слова</span>
             <p>{parsed.join(', ')}</p>
             <button type="button" className="mini-link-button" onClick={() => setEditing((value) => !value)}>
-              {editing ? 'Close settings' : 'Settings'}
+              {editing ? 'Закрыть настройки' : 'Настройки'}
             </button>
             {editing ? (
               <div className="branded-editor">
                 <textarea value={draft} onChange={(event) => setDraft(event.target.value)} />
                 <div className="branded-editor-actions">
                   <button type="button" className="button small" onClick={saveKeywords}>
-                    Save
+                    Сохранить
                   </button>
                   <button type="button" className="button ghost small" onClick={() => setEditing(false)}>
-                    Cancel
+                    Отмена
                   </button>
                 </div>
               </div>

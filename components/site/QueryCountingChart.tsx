@@ -22,7 +22,7 @@ export function QueryCountingChart({
     if (mode === 'total') {
       return [
         {
-          label: 'Total',
+          label: 'Всего',
           color: '#60a5fa',
           values: labels.map((_, index) => series.reduce((acc, item) => acc + (item.values[index] || 0), 0)),
         },
@@ -59,13 +59,13 @@ export function QueryCountingChart({
   return (
     <section className="panel site-detail-panel">
       <div className="mini-tabs">
-        <h3>Query counting</h3>
+        <h3>Число запросов</h3>
         <div>
           <button type="button" className={`mini-tab-btn ${mode === 'total' ? 'active' : ''}`} onClick={() => setMode('total')}>
-            Total
+            Всего
           </button>
           <button type="button" className={`mini-tab-btn ${mode === 'ranking' ? 'active' : ''}`} onClick={() => setMode('ranking')}>
-            By ranking
+            По позициям
           </button>
         </div>
       </div>
@@ -79,7 +79,7 @@ export function QueryCountingChart({
         ))}
         <label className="stacked-toggle">
           <input type="checkbox" checked={stacked} onChange={(event) => setStacked(event.target.checked)} />
-          <span>Stacked view</span>
+          <span>Стековый вид</span>
         </label>
       </div>
 

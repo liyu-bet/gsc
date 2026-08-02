@@ -3,37 +3,38 @@
 import { useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { rangeLabel, searchTypeLabel } from '@/lib/ui-labels';
 
 const METRIC_OPTIONS = [
-  { key: 'clicks', label: 'Clicks', icon: '✦' },
-  { key: 'impressions', label: 'Impressions', icon: '◉' },
-  { key: 'position', label: 'Avg position', icon: '⌃' },
+  { key: 'clicks', label: 'Клики', icon: '✦' },
+  { key: 'impressions', label: 'Показы', icon: '◉' },
+  { key: 'position', label: 'Ср. позиция', icon: '⌃' },
 ] as const;
 
 const SORT_OPTIONS = [
-  { key: 'az', label: 'A to Z' },
-  { key: 'total', label: 'Total' },
-  { key: 'growth', label: 'Growth' },
-  { key: 'growthPct', label: 'Growth %' },
+  { key: 'az', label: 'А → Я' },
+  { key: 'total', label: 'Всего' },
+  { key: 'growth', label: 'Рост' },
+  { key: 'growthPct', label: 'Рост %' },
 ] as const;
 
 const SEARCH_TYPES = [
-  { key: 'web', label: 'Web' },
-  { key: 'discover', label: 'Discover' },
-  { key: 'news', label: 'News' },
-  { key: 'image', label: 'Image' },
-  { key: 'video', label: 'Video' },
+  { key: 'web', label: searchTypeLabel('web') },
+  { key: 'discover', label: searchTypeLabel('discover') },
+  { key: 'news', label: searchTypeLabel('news') },
+  { key: 'image', label: searchTypeLabel('image') },
+  { key: 'video', label: searchTypeLabel('video') },
 ] as const;
 
 const RANGE_OPTIONS = [
-  { key: '1', label: '1 day' },
-  { key: '7', label: '7 days' },
-  { key: '14', label: '14 days' },
-  { key: '28', label: '28 days' },
-  { key: '90', label: '90 days' },
-  { key: '180', label: '180 days' },
-  { key: '365', label: '1 year' },
-  { key: '730', label: '2 years' },
+  { key: '1', days: 1 },
+  { key: '7', days: 7 },
+  { key: '14', days: 14 },
+  { key: '28', days: 28 },
+  { key: '90', days: 90 },
+  { key: '180', days: 180 },
+  { key: '365', days: 365 },
+  { key: '730', days: 730 },
 ] as const;
 
 const STORAGE_KEY = 'gsk-dashboard-preferences';
@@ -157,21 +158,21 @@ export function DashboardToolbar({
     <section className="seo-toolbar panel panel-compact">
       <div className="toolbar-left">
         <form action="/dashboard" className="search-form" method="get">
-          <input defaultValue={search} name="q" placeholder="Search" type="search" />
+          <input defaultValue={search} name="q" placeholder="Поиск" type="search" />
           <input type="hidden" name="sort" value={sort} />
           <input type="hidden" name="range" value={range} />
           <input type="hidden" name="searchType" value={searchType} />
           <input type="hidden" name="compare" value={compare ? '1' : '0'} />
           <input type="hidden" name="metrics" value={visibleMetrics.join(',')} />
           <button className="button ghost small" type="submit">
-            Search
+            Найти
           </button>
         </form>
       </div>
 
       <div className="toolbar-right">
         <details className="toolbar-menu">
-          <summary>Sort</summary>
+          <summary>Сортировка</summary>
           <div className="menu-card">
             {SORT_OPTIONS.map((option) => (
               <Link
@@ -186,10 +187,10 @@ export function DashboardToolbar({
         </details>
 
         <details className="toolbar-menu">
-          <summary>Filter</summary>
+          <summary>Фильтр</summary>
           <div className="menu-card menu-card-wide">
             <div className="menu-group">
-              <div className="menu-label">Search Type</div>
+              <div className="menu-label">Тип поиска</div>
               {SEARCH_TYPES.map((option) => (
                 <Link
                   className={searchType === option.key ? 'menu-item active' : 'menu-item'}
@@ -201,18 +202,18 @@ export function DashboardToolbar({
               ))}
             </div>
             <div className="menu-group">
-              <div className="menu-label">Comparison</div>
+              <div className="menu-label">Сравнение</div>
               <Link className={compare ? 'menu-item active' : 'menu-item'} href={buildHref({ compare: '1' })}>
-                Previous period line
+                Линия прошлого периода
               </Link>
               <Link className={!compare ? 'menu-item active' : 'menu-item'} href={buildHref({ compare: '0' })}>
-                Disabled
+                Выключено
               </Link>
             </div>
           </div>
         </details>
 
-        <div className="metric-switches" aria-label="Metric toggles">
+        <div className="metric-switches" aria-label="Переключение метрик">
           {METRIC_OPTIONS.map((metric) => (
             <Link
               className={visibleMetrics.includes(metric.key) ? 'metric-chip active' : 'metric-chip'}
@@ -226,7 +227,7 @@ export function DashboardToolbar({
         </div>
 
         <div className="site-control-group dashboard-range-group">
-          <label htmlFor="dashboard-range">Period</label>
+          <label htmlFor="dashboard-range">Период</label>
           <select
             id="dashboard-range"
             className="site-control-select"
@@ -235,11 +236,11 @@ export function DashboardToolbar({
           >
             {RANGE_OPTIONS.map((option) => (
               <option key={option.key} value={option.key}>
-                {option.label}
+                {rangeLabel(option.days)}
               </option>
             ))}
           </select>
-          <span className="toolbar-last-date">Last available: {endDate}</span>
+          <span className="toolbar-last-date">Последняя доступная дата: {endDate}</span>
         </div>
       </div>
     </section>

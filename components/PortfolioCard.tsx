@@ -28,9 +28,9 @@ type PortfolioCardProps = {
 };
 
 const METRIC_META: Record<MetricKey, { label: string; icon: string; color: string }> = {
-  clicks: { label: 'Clicks', icon: '✦', color: '#2563eb' },
-  impressions: { label: 'Impressions', icon: '◉', color: '#7c3aed' },
-  position: { label: 'Avg position', icon: '⌃', color: '#ea580c' },
+  clicks: { label: 'Клики', icon: '✦', color: '#2563eb' },
+  impressions: { label: 'Показы', icon: '◉', color: '#7c3aed' },
+  position: { label: 'Ср. позиция', icon: '⌃', color: '#ea580c' },
 };
 
 export function PortfolioCard({
@@ -135,7 +135,7 @@ export function PortfolioCard({
         <span className="small-text">{label}</span>
         <div className="portfolio-actions-mini">
           <Link className="mini-link" href={`/sites/${id}`} prefetch>
-            Open
+            Открыть
           </Link>
         </div>
       </div>
@@ -144,7 +144,7 @@ export function PortfolioCard({
         <div className="portfolio-hover-card">
           <div className="portfolio-hover-head">
             <strong>{label}</strong>
-            <span>{rangeLabel || 'Current range'}</span>
+            <span>{rangeLabel || 'Текущий период'}</span>
           </div>
           <div className="portfolio-hover-grid">
             {visibleMetrics.map((metricKey) => {

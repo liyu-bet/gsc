@@ -1,11 +1,13 @@
 import Link from 'next/link';
 import { addDays, differenceInCalendarDays, format, isValid, parseISO, subDays } from 'date-fns';
+import { ru } from 'date-fns/locale';
 import { notFound } from 'next/navigation';
 import { requireAdmin } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { defaultDateRange, latestAvailableDate, querySite, SearchAnalyticsRow } from '@/lib/google';
 import { countryName } from '@/lib/countries';
 import { formatDecimal, formatNumber } from '@/lib/format';
+import { deviceLabel } from '@/lib/ui-labels';
 import { SiteTrendChart } from '@/components/site/SiteTrendChart';
 import { WorkspaceTable } from '@/components/site/WorkspaceTable';
 import { QueryCountingChart } from '@/components/site/QueryCountingChart';
@@ -73,7 +75,7 @@ async function safeQuery(
   } catch (error) {
     return {
       rows: [],
-      error: error instanceof Error ? error.message : 'Unknown API error',
+      error: error instanceof Error ? error.message : 'Неизвестная ошибка API',
     };
   }
 }
@@ -149,7 +151,7 @@ function buildMetricSeries(dailyCurrent: AlignedDailyRow[], dailyPrevious: Align
 
   return [
     {
-      label: 'Clicks',
+      label: 'Клики',
       color: '#2563eb',
       current: currentClicks,
       previous: previousClicks,
@@ -159,7 +161,7 @@ function buildMetricSeries(dailyCurrent: AlignedDailyRow[], dailyPrevious: Align
       changeClass: trendClass(deltaPercent(totalClicks, prevClicks)),
     },
     {
-      label: 'Impressions',
+      label: 'Показы',
       color: '#7c3aed',
       current: currentImpressions,
       previous: previousImpressions,
@@ -169,7 +171,7 @@ function buildMetricSeries(dailyCurrent: AlignedDailyRow[], dailyPrevious: Align
       changeClass: trendClass(deltaPercent(totalImpressions, prevImpressions)),
     },
     {
-      label: 'Position',
+      label: 'Позиция',
       color: '#ea580c',
       current: currentPosition,
       previous: previousPosition,
@@ -207,7 +209,7 @@ function normalizeDate(raw: string | undefined, fallback: string) {
 }
 
 function formatLabel(date: string) {
-  return format(parseISO(date), 'MMM d');
+  return format(parseISO(date), 'd MMM', { locale: ru });
 }
 
 function buildBucketSeries(rows: SearchAnalyticsRow[], labels: string[]) {
@@ -235,8 +237,7 @@ function buildBucketSeries(rows: SearchAnalyticsRow[], labels: string[]) {
 }
 
 function formatDeviceName(value: string) {
-  if (!value) return 'Unknown';
-  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+  return deviceLabel(value);
 }
 
 function queryBase(searchType: string) {
@@ -444,27 +445,27 @@ export default async function SiteDetailPage({
 
   const overviewCards = [
     {
-      label: 'Ranking queries',
+      label: 'Запросы в выдаче',
       current: formatNumber(queryRows.length),
       change: formatTrend(deltaPercent(sum(queryRows, (row) => row.clicks), sum(queryRows, (row) => row.previousClicks))),
       changeClass: trendClass(deltaPercent(sum(queryRows, (row) => row.clicks), sum(queryRows, (row) => row.previousClicks))),
     },
     {
-      label: 'Ranking pages',
+      label: 'Страницы в выдаче',
       current: formatNumber(pageRows.length),
       change: formatTrend(deltaPercent(sum(pageRows, (row) => row.clicks), sum(pageRows, (row) => row.previousClicks))),
       changeClass: trendClass(deltaPercent(sum(pageRows, (row) => row.clicks), sum(pageRows, (row) => row.previousClicks))),
     },
     {
-      label: 'Countries',
+      label: 'Страны',
       current: formatNumber(countryRows.length),
       change: formatTrend(deltaPercent(sum(countryRows, (row) => row.clicks), sum(countryRows, (row) => row.previousClicks))),
       changeClass: trendClass(deltaPercent(sum(countryRows, (row) => row.clicks), sum(countryRows, (row) => row.previousClicks))),
     },
     {
-      label: 'Devices',
+      label: 'Устройства',
       current: formatNumber(deviceRows.length),
-      change: `${formatDecimal(weightedAverage(deviceRows, (row) => row.position, (row) => row.impressions), 1)} avg pos`,
+      change: `${formatDecimal(weightedAverage(deviceRows, (row) => row.position, (row) => row.impressions), 1)} ср. поз.`,
       changeClass: 'good',
     },
   ];
@@ -486,10 +487,10 @@ export default async function SiteDetailPage({
     .filter(Boolean) as string[];
 
   const filterChipData = [
-    activeFilters.query ? { label: 'Query', value: activeFilters.query, href: siteHref(id, baseParams, { query: undefined }) } : null,
-    activeFilters.page ? { label: 'Page', value: activeFilters.page, href: siteHref(id, baseParams, { page: undefined }) } : null,
-    activeFilters.country ? { label: 'Country', value: countryName(activeFilters.country), href: siteHref(id, baseParams, { country: undefined }) } : null,
-    activeFilters.device ? { label: 'Device', value: formatDeviceName(activeFilters.device), href: siteHref(id, baseParams, { device: undefined }) } : null,
+    activeFilters.query ? { label: 'Запрос', value: activeFilters.query, href: siteHref(id, baseParams, { query: undefined }) } : null,
+    activeFilters.page ? { label: 'Страница', value: activeFilters.page, href: siteHref(id, baseParams, { page: undefined }) } : null,
+    activeFilters.country ? { label: 'Страна', value: countryName(activeFilters.country), href: siteHref(id, baseParams, { country: undefined }) } : null,
+    activeFilters.device ? { label: 'Устройство', value: formatDeviceName(activeFilters.device), href: siteHref(id, baseParams, { device: undefined }) } : null,
   ].filter(Boolean) as Array<{ label: string; value: string; href: string }>;
 
   const clearFiltersHref = siteHref(id, baseParams, {
@@ -504,17 +505,17 @@ export default async function SiteDetailPage({
       <section className="panel site-hero-panel">
         <div className="site-hero-head">
           <div>
-            <div className="badge">Site workspace</div>
+            <div className="badge">Рабочая область сайта</div>
             <h1>{property.label || property.siteUrl}</h1>
             <p className="muted">{property.siteUrl}</p>
-            <p className="muted">Connected Google account: {property.connection.email}</p>
+            <p className="muted">Подключённый аккаунт Google: {property.connection.email}</p>
             <p className="muted">
-              Current range: {range.startDate} → {range.endDate} · Last available date: {latestAvailableDate()}
+              Текущий период: {range.startDate} → {range.endDate} · Последняя доступная дата: {latestAvailableDate()}
             </p>
           </div>
           <div className="header-actions">
             <Link className="button ghost small" href={`/dashboard?range=${rangeDays}&searchType=${searchType}`} prefetch>
-              Back to dashboard
+              Назад к панели
             </Link>
           </div>
         </div>
@@ -545,7 +546,7 @@ export default async function SiteDetailPage({
 
       {errors.length > 0 ? (
         <div className="alert error">
-          Some reports could not be loaded for this site. If you recently removed this property in Search Console, press “Refresh sites” on the dashboard connection so stale properties are removed from the app database.
+          Часть отчётов для этого сайта не загрузилась. Если ресурс недавно удалили в Search Console, нажмите «Обновить сайты» у подключения на панели — устаревшие ресурсы исчезнут из базы приложения.
         </div>
       ) : null}
 
@@ -554,18 +555,18 @@ export default async function SiteDetailPage({
       </section>
 
       <section className="grid two-columns site-grid-gap">
-        <WorkspaceTable title="Queries" rows={queryRows} keyLabel="Query" />
-        <WorkspaceTable title="Pages" rows={pageRows} keyLabel="Page" />
+        <WorkspaceTable title="Запросы" rows={queryRows} keyLabel="Запрос" />
+        <WorkspaceTable title="Страницы" rows={pageRows} keyLabel="Страница" />
       </section>
 
       <section className="grid two-columns site-grid-gap">
         <QueryCountingChart labels={alignedCurrentDates.map((item) => formatLabel(item))} series={bucketSeries} />
-        <WorkspaceTable title="Countries" rows={countryRows} keyLabel="Country" />
+        <WorkspaceTable title="Страны" rows={countryRows} keyLabel="Страна" />
       </section>
 
       <section className="grid two-columns site-grid-gap">
-        <WorkspaceTable title="New rankings" rows={newRankings} keyLabel="Query" />
-        <WorkspaceTable title="Devices" rows={deviceRows} keyLabel="Device" />
+        <WorkspaceTable title="Новые позиции" rows={newRankings} keyLabel="Запрос" />
+        <WorkspaceTable title="Устройства" rows={deviceRows} keyLabel="Устройство" />
       </section>
     </main>
   );

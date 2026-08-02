@@ -69,21 +69,21 @@ export function WorkspaceTable({
         <h3>{title}</h3>
         <div>
           <button type="button" className={`mini-tab-btn ${tab === 'all' ? 'active' : ''}`} onClick={() => setTab('all')}>
-            All
+            Все
           </button>
           <button
             type="button"
             className={`mini-tab-btn ${tab === 'growing' ? 'active' : ''}`}
             onClick={() => setTab('growing')}
           >
-            Growing
+            Растущие
           </button>
           <button
             type="button"
             className={`mini-tab-btn ${tab === 'decaying' ? 'active' : ''}`}
             onClick={() => setTab('decaying')}
           >
-            Decaying
+            Падающие
           </button>
         </div>
       </div>
@@ -93,9 +93,9 @@ export function WorkspaceTable({
           <thead>
             <tr>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('key')}>{keyLabel}{sortMark(sortKey, sortDirection, 'key')}</button></th>
-              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('clicks')}>Clicks{sortMark(sortKey, sortDirection, 'clicks')}</button></th>
-              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('impressions')}>Impressions{sortMark(sortKey, sortDirection, 'impressions')}</button></th>
-              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('position')}>Position{sortMark(sortKey, sortDirection, 'position')}</button></th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('clicks')}>Клики{sortMark(sortKey, sortDirection, 'clicks')}</button></th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('impressions')}>Показы{sortMark(sortKey, sortDirection, 'impressions')}</button></th>
+              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('position')}>Позиция{sortMark(sortKey, sortDirection, 'position')}</button></th>
             </tr>
           </thead>
           <tbody>
@@ -137,7 +137,7 @@ export function WorkspaceTable({
       {sortedRows.length > 10 ? (
         <div className="expand-row">
           <button type="button" className="expand-button" onClick={() => setExpanded((value) => !value)}>
-            {expanded ? 'Collapse' : 'Expand'}
+            {expanded ? 'Свернуть' : 'Развернуть'}
           </button>
         </div>
       ) : null}
@@ -176,5 +176,5 @@ function formatSigned(value: number) {
 }
 
 function formatInt(value: number) {
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value);
 }

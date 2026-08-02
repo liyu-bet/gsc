@@ -116,7 +116,7 @@ export function SiteTrendChart({
           viewBox={`0 0 ${width} ${height}`}
           className="site-trend-svg"
           role="img"
-          aria-label="Site performance trend"
+          aria-label="Динамика показателей сайта"
           onMouseLeave={() => setHoverIndex(null)}
           onMouseMove={(event) => {
             const rect = event.currentTarget.getBoundingClientRect();
@@ -211,6 +211,6 @@ export function SiteTrendChart({
 }
 
 function formatTooltipValue(label: string, value: number) {
-  if (label === 'Position') return value.toFixed(1);
-  return Number.isInteger(value) ? value.toLocaleString('en-US') : value.toFixed(1);
+  if (label === 'Позиция' || label === 'Position') return value.toFixed(1);
+  return Number.isInteger(value) ? value.toLocaleString('ru-RU') : value.toFixed(1);
 }

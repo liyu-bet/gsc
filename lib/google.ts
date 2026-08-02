@@ -82,7 +82,7 @@ export async function exchangeCodeForTokens(code: string): Promise<GoogleTokenRe
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Google token exchange failed: ${text}`);
+    throw new Error(`Ошибка обмена токена Google: ${text}`);
   }
 
   return response.json();
@@ -104,7 +104,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<GoogleTo
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Google token refresh failed: ${text}`);
+    throw new Error(`Ошибка обновления токена Google: ${text}`);
   }
 
   return response.json();
@@ -118,7 +118,7 @@ export async function fetchGoogleUserInfo(accessToken: string): Promise<GoogleUs
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Failed to fetch Google user info: ${text}`);
+    throw new Error(`Не удалось получить данные пользователя Google: ${text}`);
   }
 
   return response.json();
@@ -158,7 +158,7 @@ export async function listSearchConsoleSites(connection: GoogleConnection): Prom
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Search Console sites.list failed: ${text}`);
+    throw new Error(`Ошибка Search Console sites.list: ${text}`);
   }
 
   const data = (await response.json()) as { siteEntry?: GscSiteEntry[] };
@@ -171,7 +171,7 @@ export async function syncSitesForConnection(connectionId: string): Promise<numb
     include: { properties: true },
   });
   if (!connection) {
-    throw new Error('Connection not found');
+    throw new Error('Подключение не найдено');
   }
 
   const sites = await listSearchConsoleSites(connection);
@@ -261,7 +261,7 @@ export async function querySite(
 ) {
   const connection = await prisma.googleConnection.findUnique({ where: { id: connectionId } });
   if (!connection) {
-    throw new Error('Connection not found');
+    throw new Error('Подключение не найдено');
   }
 
   const accessToken = await getUsableAccessToken(connection);
@@ -280,7 +280,7 @@ export async function querySite(
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Search Analytics query failed: ${text}`);
+    throw new Error(`Ошибка запроса Search Analytics: ${text}`);
   }
 
   return response.json() as Promise<SearchAnalyticsResponse>;

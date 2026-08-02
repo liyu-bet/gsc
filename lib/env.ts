@@ -20,7 +20,7 @@ export const env = {
     return required('APP_URL');
   },
   get appName() {
-    return optional('APP_NAME', 'GSC Portfolio Dashboard');
+    return optional('APP_NAME', 'GSC — портфельная панель');
   },
   get sessionSecret() {
     return required('SESSION_SECRET');
