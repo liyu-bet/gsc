@@ -7,7 +7,6 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 const METRIC_OPTIONS = [
   { key: 'clicks', label: 'Clicks', icon: '✦' },
   { key: 'impressions', label: 'Impressions', icon: '◉' },
-  { key: 'ctr', label: 'CTR', icon: '∕' },
   { key: 'position', label: 'Avg position', icon: '⌃' },
 ] as const;
 
@@ -92,8 +91,18 @@ export function DashboardToolbar({
         const stored = JSON.parse(dashboardRaw) as Record<string, string>;
         for (const key of ['range', 'searchType', 'compare', 'metrics'] as const) {
           if (!params.get(key) && stored[key]) {
-            params.set(key, stored[key]);
-            changed = true;
+            const value =
+              key === 'metrics'
+                ? stored[key]
+                    .split(',')
+                    .map((item) => item.trim())
+                    .filter((item) => item && item !== 'ctr')
+                    .join(',')
+                : stored[key];
+            if (value) {
+              params.set(key, value);
+              changed = true;
+            }
           }
         }
       }

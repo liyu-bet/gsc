@@ -8,7 +8,7 @@ Self-hosted dashboard for multiple Google Search Console accounts and properties
 - Connect multiple Google accounts with Search Console access
 - Import available Search Console properties from each account
 - Show/hide selected properties on the master dashboard
-- Portfolio overview with clicks, impressions, CTR and weighted average position
+- Portfolio overview with clicks, impressions and weighted average position
 - Drilldown page for each selected property
 - Top pages, top queries, countries, devices and daily trend
 

@@ -7,17 +7,15 @@ type WorkspaceRow = {
   key: string;
   clicks: number;
   impressions: number;
-  ctr: number;
   position: number;
   previousClicks: number;
   previousImpressions: number;
-  previousCtr: number;
   previousPosition: number;
   href?: string;
   active?: boolean;
 };
 
-type SortKey = 'key' | 'clicks' | 'impressions' | 'ctr' | 'position';
+type SortKey = 'key' | 'clicks' | 'impressions' | 'position';
 
 export function WorkspaceTable({
   title,
@@ -97,7 +95,6 @@ export function WorkspaceTable({
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('key')}>{keyLabel}{sortMark(sortKey, sortDirection, 'key')}</button></th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('clicks')}>Clicks{sortMark(sortKey, sortDirection, 'clicks')}</button></th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('impressions')}>Impressions{sortMark(sortKey, sortDirection, 'impressions')}</button></th>
-              <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('ctr')}>CTR{sortMark(sortKey, sortDirection, 'ctr')}</button></th>
               <th><button type="button" className="table-sort-btn" onClick={() => toggleSort('position')}>Position{sortMark(sortKey, sortDirection, 'position')}</button></th>
             </tr>
           </thead>
@@ -123,12 +120,6 @@ export function WorkspaceTable({
                   <strong>{formatInt(row.impressions)}</strong>
                   <span className={trendClass(percentChange(row.impressions, row.previousImpressions))}>
                     {formatPercentChange(percentChange(row.impressions, row.previousImpressions))}
-                  </span>
-                </td>
-                <td>
-                  <strong>{(row.ctr * 100).toFixed(1)}%</strong>
-                  <span className={trendClass(percentChange(row.ctr, row.previousCtr))}>
-                    {formatPercentChange(percentChange(row.ctr, row.previousCtr))}
                   </span>
                 </td>
                 <td>

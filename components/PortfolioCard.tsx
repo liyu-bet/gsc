@@ -2,9 +2,9 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
-import { formatDecimal, formatNumber, formatPercent } from '@/lib/format';
+import { formatDecimal, formatNumber } from '@/lib/format';
 
-type MetricKey = 'clicks' | 'impressions' | 'ctr' | 'position';
+type MetricKey = 'clicks' | 'impressions' | 'position';
 
 type MetricSnapshot = {
   current: number;
@@ -30,7 +30,6 @@ type PortfolioCardProps = {
 const METRIC_META: Record<MetricKey, { label: string; icon: string; color: string }> = {
   clicks: { label: 'Clicks', icon: '✦', color: '#2563eb' },
   impressions: { label: 'Impressions', icon: '◉', color: '#7c3aed' },
-  ctr: { label: 'CTR', icon: '∕', color: '#0f766e' },
   position: { label: 'Avg position', icon: '⌃', color: '#ea580c' },
 };
 
@@ -174,7 +173,6 @@ export function PortfolioCard({
 }
 
 function formatMetricValue(metric: MetricKey, value: number) {
-  if (metric === 'ctr') return formatPercent(value);
   if (metric === 'position') return formatDecimal(value, 1);
   if (metric === 'impressions') return compactNumber(value);
   return formatNumber(value);

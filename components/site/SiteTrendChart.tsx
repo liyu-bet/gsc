@@ -211,7 +211,6 @@ export function SiteTrendChart({
 }
 
 function formatTooltipValue(label: string, value: number) {
-  if (label === 'CTR') return `${value.toFixed(1)}%`;
   if (label === 'Position') return value.toFixed(1);
   return Number.isInteger(value) ? value.toLocaleString('en-US') : value.toFixed(1);
 }

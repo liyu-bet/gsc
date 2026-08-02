@@ -3,20 +3,19 @@ import { unstable_cache } from 'next/cache';
 import { requireAdmin } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { defaultDateRange, latestAvailableDate, querySite } from '@/lib/google';
-import { formatDecimal, formatNumber, formatPercent } from '@/lib/format';
+import { formatDecimal, formatNumber } from '@/lib/format';
 import { DashboardToolbar } from '@/components/DashboardToolbar';
 import { PortfolioCard } from '@/components/PortfolioCard';
 import { AppHeader } from '@/components/AppHeader';
 import { EmptyState } from '@/components/EmptyState';
 
-type MetricKey = 'clicks' | 'impressions' | 'ctr' | 'position';
+type MetricKey = 'clicks' | 'impressions' | 'position';
 type SearchType = 'web' | 'discover' | 'news' | 'image' | 'video';
 
 type DailyRow = {
   keys?: string[];
   clicks?: number;
   impressions?: number;
-  ctr?: number;
   position?: number;
 };
 
@@ -32,7 +31,7 @@ type SiteCardData = {
   error: string | null;
 };
 
-const DEFAULT_METRICS: MetricKey[] = ['clicks', 'impressions', 'ctr', 'position'];
+const DEFAULT_METRICS: MetricKey[] = ['clicks', 'impressions', 'position'];
 const VALID_METRICS = new Set<MetricKey>(DEFAULT_METRICS);
 const VALID_SEARCH_TYPES = new Set<SearchType>(['web', 'discover', 'news', 'image', 'video']);
 const VALID_SORTS = new Set(['az', 'total', 'growth', 'growthPct']);
@@ -209,12 +208,6 @@ export default async function DashboardPage({
           </span>
         </div>
         <div>
-          <strong>{formatPercent(portfolioSummary.ctr.current)}</strong>
-          <span className={portfolioSummary.ctr.delta >= 0 ? 'good' : 'bad'}>
-            {formatSignedDecimal(portfolioSummary.ctr.delta, 2)} CTR
-          </span>
-        </div>
-        <div>
           <strong>{formatDecimal(portfolioSummary.position.current, 1)}</strong>
           <span className={portfolioSummary.position.delta <= 0 ? 'good' : 'bad'}>
             {formatSignedDecimal(portfolioSummary.position.previous - portfolioSummary.position.current, 1)} position
@@ -369,7 +362,6 @@ function alignDailyRows(alignedDates: string[], rows: DailyRow[]) {
       date,
       clicks: row?.clicks || 0,
       impressions: row?.impressions || 0,
-      ctr: row?.ctr || 0,
       position: row?.position || 0,
     };
   });
@@ -379,7 +371,6 @@ function buildSeries(rows: ReturnType<typeof alignDailyRows>): Record<MetricKey,
   return {
     clicks: rows.map((row) => row.clicks),
     impressions: rows.map((row) => row.impressions),
-    ctr: rows.map((row) => row.ctr),
     position: rows.map((row) => row.position),
   };
 }
@@ -391,7 +382,6 @@ function buildMetricSnapshots(currentRows: ReturnType<typeof alignDailyRows>, pr
   return {
     clicks: metricSnapshot(current.clicks, previous.clicks),
     impressions: metricSnapshot(current.impressions, previous.impressions),
-    ctr: metricSnapshot(current.ctr, previous.ctr),
     position: metricSnapshot(current.position, previous.position),
   } satisfies Record<MetricKey, { current: number; previous: number; delta: number; deltaPct: number }>;
 }
@@ -399,7 +389,6 @@ function buildMetricSnapshots(currentRows: ReturnType<typeof alignDailyRows>, pr
 function summarizeRows(rows: ReturnType<typeof alignDailyRows>) {
   const clicks = rows.reduce((acc, row) => acc + row.clicks, 0);
   const impressions = rows.reduce((acc, row) => acc + row.impressions, 0);
-  const ctr = impressions > 0 ? clicks / impressions : 0;
   const weightedPosition = impressions > 0
     ? rows.reduce((acc, row) => acc + row.position * row.impressions, 0) / impressions
     : 0;
@@ -407,7 +396,6 @@ function summarizeRows(rows: ReturnType<typeof alignDailyRows>) {
   return {
     clicks,
     impressions,
-    ctr,
     position: weightedPosition,
   };
 }
@@ -428,7 +416,6 @@ function emptySeries(length: number): Record<MetricKey, number[]> {
   return {
     clicks: [...zeros],
     impressions: [...zeros],
-    ctr: [...zeros],
     position: [...zeros],
   };
 }
@@ -437,7 +424,6 @@ function emptyMetrics() {
   return {
     clicks: metricSnapshot(0, 0),
     impressions: metricSnapshot(0, 0),
-    ctr: metricSnapshot(0, 0),
     position: metricSnapshot(0, 0),
   };
 }
@@ -473,8 +459,6 @@ function buildPortfolioSummary(sites: SiteCardData[]) {
   const clicksPrevious = sites.reduce((acc, site) => acc + site.metrics.clicks.previous, 0);
   const impressionsCurrent = sites.reduce((acc, site) => acc + site.metrics.impressions.current, 0);
   const impressionsPrevious = sites.reduce((acc, site) => acc + site.metrics.impressions.previous, 0);
-  const ctrCurrent = impressionsCurrent > 0 ? clicksCurrent / impressionsCurrent : 0;
-  const ctrPrevious = impressionsPrevious > 0 ? clicksPrevious / impressionsPrevious : 0;
   const weightedPositionCurrent = impressionsCurrent > 0
     ? sites.reduce((acc, site) => acc + site.metrics.position.current * site.metrics.impressions.current, 0) / impressionsCurrent
     : 0;
@@ -485,7 +469,6 @@ function buildPortfolioSummary(sites: SiteCardData[]) {
   return {
     clicks: metricSnapshot(clicksCurrent, clicksPrevious),
     impressions: metricSnapshot(impressionsCurrent, impressionsPrevious),
-    ctr: metricSnapshot(ctrCurrent, ctrPrevious),
     position: metricSnapshot(weightedPositionCurrent, weightedPositionPrevious),
   };
 }

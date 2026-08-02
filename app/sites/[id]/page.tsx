@@ -22,11 +22,9 @@ type EnrichedRow = {
   rawKey: string;
   clicks: number;
   impressions: number;
-  ctr: number;
   position: number;
   previousClicks: number;
   previousImpressions: number;
-  previousCtr: number;
   previousPosition: number;
   href?: string;
   active?: boolean;
@@ -80,7 +78,7 @@ async function safeQuery(
   }
 }
 
-function metricNumber(row: SearchAnalyticsRow | undefined, key: 'clicks' | 'impressions' | 'ctr' | 'position') {
+function metricNumber(row: SearchAnalyticsRow | undefined, key: 'clicks' | 'impressions' | 'position') {
   return Number(row?.[key] || 0);
 }
 
@@ -100,11 +98,9 @@ function enrichRows(currentRows: SearchAnalyticsRow[], previousRows: SearchAnaly
         rawKey: key,
         clicks: metricNumber(row, 'clicks'),
         impressions: metricNumber(row, 'impressions'),
-        ctr: metricNumber(row, 'ctr'),
         position: metricNumber(row, 'position'),
         previousClicks: metricNumber(previous, 'clicks'),
         previousImpressions: metricNumber(previous, 'impressions'),
-        previousCtr: metricNumber(previous, 'ctr'),
         previousPosition: metricNumber(previous, 'position'),
       };
     })
@@ -141,8 +137,6 @@ function buildMetricSeries(dailyCurrent: AlignedDailyRow[], dailyPrevious: Align
   const previousClicks = dailyPrevious.map((row) => row.clicks);
   const currentImpressions = dailyCurrent.map((row) => row.impressions);
   const previousImpressions = dailyPrevious.map((row) => row.impressions);
-  const currentCtr = dailyCurrent.map((row) => row.ctr * 100);
-  const previousCtr = dailyPrevious.map((row) => row.ctr * 100);
   const currentPosition = dailyCurrent.map((row) => row.position);
   const previousPosition = dailyPrevious.map((row) => row.position);
 
@@ -150,8 +144,6 @@ function buildMetricSeries(dailyCurrent: AlignedDailyRow[], dailyPrevious: Align
   const prevClicks = previousClicks.reduce((a, b) => a + b, 0);
   const totalImpressions = currentImpressions.reduce((a, b) => a + b, 0);
   const prevImpressions = previousImpressions.reduce((a, b) => a + b, 0);
-  const avgCtr = totalImpressions ? (totalClicks / totalImpressions) * 100 : 0;
-  const prevCtr = prevImpressions ? (prevClicks / prevImpressions) * 100 : 0;
   const avgPosition = currentPosition.length ? currentPosition.reduce((a, b) => a + b, 0) / currentPosition.length : 0;
   const prevPosition = previousPosition.length ? previousPosition.reduce((a, b) => a + b, 0) / previousPosition.length : 0;
 
@@ -175,16 +167,6 @@ function buildMetricSeries(dailyCurrent: AlignedDailyRow[], dailyPrevious: Align
       previousText: formatNumber(prevImpressions),
       changeText: formatTrend(deltaPercent(totalImpressions, prevImpressions)),
       changeClass: trendClass(deltaPercent(totalImpressions, prevImpressions)),
-    },
-    {
-      label: 'CTR',
-      color: '#0f766e',
-      current: currentCtr,
-      previous: previousCtr,
-      currentText: `${formatDecimal(avgCtr, 1)}%`,
-      previousText: `${formatDecimal(prevCtr, 1)}%`,
-      changeText: formatTrend(deltaPercent(avgCtr, prevCtr)),
-      changeClass: trendClass(deltaPercent(avgCtr, prevCtr)),
     },
     {
       label: 'Position',
@@ -323,7 +305,6 @@ type AlignedDailyRow = {
   date: string;
   clicks: number;
   impressions: number;
-  ctr: number;
   position: number;
 };
 
@@ -342,7 +323,6 @@ function alignDailyRows(alignedDates: string[], rows: SearchAnalyticsRow[]): Ali
       date,
       clicks: row?.clicks || 0,
       impressions: row?.impressions || 0,
-      ctr: row?.ctr || 0,
       position: row?.position || 0,
     };
   });
