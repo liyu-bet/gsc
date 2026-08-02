@@ -180,7 +180,15 @@ export default async function DashboardPage({
 
   return (
     <main className="page-shell seo-shell">
-      <AppHeader compact />
+      <AppHeader
+        compact
+        connections={connections.map((connection) => ({
+          id: connection.id,
+          email: connection.email,
+          name: connection.name,
+          propertiesCount: connection.properties.length,
+        }))}
+      />
 
       {params.google_error ? <div className="alert error">Ошибка подключения Google: {params.google_error}</div> : null}
 
@@ -246,74 +254,32 @@ export default async function DashboardPage({
         </section>
       )}
 
-      <section className="grid two-columns manage-grid">
-        <section className="panel panel-compact">
-          <div className="panel-header">
-            <div>
-              <h3>Подключённые аккаунты Google</h3>
-              <p className="muted">Обновляйте, удаляйте и управляйте импортированными ресурсами здесь.</p>
-            </div>
+      <section className="panel panel-compact sites-scroll-panel manage-grid">
+        <div className="panel-header">
+          <div>
+            <h3>Выбранные ресурсы</h3>
+            <p className="muted">В сетке портфеля выше показываются только включённые ресурсы.</p>
           </div>
-          {connections.length === 0 ? (
-            <EmptyState
-              title="Аккаунты Google ещё не подключены"
-              text="Нажмите «Подключить аккаунт Google», подтвердите доступ — и доступные ресурсы Search Console появятся здесь."
-            />
-          ) : (
-            <div className="stack-lg">
-              {connections.map((connection) => (
-                <article className="connection-card" key={connection.id}>
-                  <div className="connection-header">
-                    <div>
-                      <h4>{connection.name || connection.email}</h4>
-                      <p className="muted">{connection.email}</p>
-                    </div>
-                    <div className="header-actions">
-                      <form action={`/api/connections/${connection.id}/sync`} method="post">
-                        <button className="button small" type="submit">
-                          Обновить сайты
-                        </button>
-                      </form>
-                      <form action={`/api/connections/${connection.id}/delete`} method="post">
-                        <button className="button ghost small" type="submit">
-                          Удалить
-                        </button>
-                      </form>
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section className="panel panel-compact sites-scroll-panel">
-          <div className="panel-header">
-            <div>
-              <h3>Выбранные ресурсы</h3>
-              <p className="muted">В сетке портфеля выше показываются только включённые ресурсы.</p>
-            </div>
-          </div>
-          {selectedProperties.length === 0 ? (
-            <EmptyState title="Нет выбранных ресурсов" text="Включите хотя бы один ресурс, чтобы видеть его в портфеле." />
-          ) : (
-            <div className="properties-list compact-list sites-scroll-list">
-              {selectedProperties.map((property) => (
-                <div className="property-row" key={property.id}>
-                  <div>
-                    <div className="property-title">{property.label}</div>
-                    <div className="muted small-text">{property.siteUrl}</div>
-                  </div>
-                  <div className="property-actions">
-                    <a className="button ghost small" href={`/sites/${property.id}`}>
-                      Открыть
-                    </a>
-                  </div>
+        </div>
+        {selectedProperties.length === 0 ? (
+          <EmptyState title="Нет выбранных ресурсов" text="Включите хотя бы один ресурс, чтобы видеть его в портфеле." />
+        ) : (
+          <div className="properties-list compact-list sites-scroll-list">
+            {selectedProperties.map((property) => (
+              <div className="property-row" key={property.id}>
+                <div>
+                  <div className="property-title">{property.label}</div>
+                  <div className="muted small-text">{property.siteUrl}</div>
                 </div>
-              ))}
-            </div>
-          )}
-        </section>
+                <div className="property-actions">
+                  <a className="button ghost small" href={`/sites/${property.id}`}>
+                    Открыть
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </main>
   );

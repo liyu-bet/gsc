@@ -225,6 +225,121 @@ select {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.accounts-control {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.accounts-select {
+  position: relative;
+}
+
+.accounts-select-summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  user-select: none;
+}
+
+.accounts-select-summary::-webkit-details-marker {
+  display: none;
+}
+
+.accounts-select-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.accounts-select-caret {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.accounts-select[open] .accounts-select-summary {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+}
+
+.accounts-select-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 40;
+  width: min(420px, 86vw);
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.accounts-empty {
+  padding: 12px;
+  font-size: 0.92rem;
+}
+
+.accounts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.accounts-list-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-soft);
+}
+
+.accounts-list-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.accounts-list-meta strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accounts-list-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.accounts-control button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .panel {
@@ -647,9 +762,35 @@ tbody td {
   }
 
   .property-row,
-  .connection-header {
+  .connection-header,
+  .accounts-list-item {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .accounts-select-summary {
+    min-width: 0;
+    width: 100%;
+    max-width: none;
+  }
+
+  .accounts-select-menu {
+    left: 0;
+    right: 0;
+    width: auto;
+  }
+
+  .accounts-control {
+    width: 100%;
+  }
+
+  .accounts-control form,
+  .accounts-control .accounts-select {
+    flex: 1;
+  }
+
+  .accounts-control button {
+    width: 100%;
   }
 }
 

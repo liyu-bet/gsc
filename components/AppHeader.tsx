@@ -1,8 +1,18 @@
-type AppHeaderProps = {
-  compact?: boolean;
+import { ConnectedAccountsControl } from '@/components/ConnectedAccountsControl';
+
+type ConnectionItem = {
+  id: string;
+  email: string;
+  name: string | null;
+  propertiesCount: number;
 };
 
-export function AppHeader({ compact = false }: AppHeaderProps) {
+type AppHeaderProps = {
+  compact?: boolean;
+  connections?: ConnectionItem[];
+};
+
+export function AppHeader({ compact = false, connections = [] }: AppHeaderProps) {
   return (
     <header className={compact ? 'app-header app-header-compact' : 'app-header'}>
       <div>
@@ -17,6 +27,7 @@ export function AppHeader({ compact = false }: AppHeaderProps) {
         <a className="button" href="/api/google/connect">
           Подключить аккаунт Google
         </a>
+        <ConnectedAccountsControl connections={connections} />
         <form action="/api/auth/logout" method="post">
           <button className="button ghost" type="submit">
             Выйти
