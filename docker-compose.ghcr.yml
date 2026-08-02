@@ -3,4 +3,5 @@
 services:
   app:
     image: ghcr.io/liyu-bet/gsc-app:latest
-    build: null
+    pull_policy: always
+    build: !reset null

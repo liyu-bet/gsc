@@ -42,13 +42,16 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          provenance: false
           tags: |
             ${{ env.IMAGE_APP }}:latest
             ${{ env.IMAGE_APP }}:${{ steps.sha.outputs.short }}
           build-args: |
             DATABASE_URL=postgresql://gsc:build@127.0.0.1:5432/gsc_dashboard
+          # gha cache can fail with "error writing layer blob: not_found";
+          # ignore-error keeps the build green when cache is stale/corrupt.
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
 
   deploy:
     name: Deploy on server
@@ -65,6 +68,7 @@ jobs:
           script: |
             set -e
             cd /var/www/gsc
-            docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
-            docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
+            # Pull prebuilt image only — never build on the VPS.
+            docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull app
+            docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d --no-build
           script_stop: true
