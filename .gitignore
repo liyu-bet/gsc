@@ -5,6 +5,7 @@ node_modules
 coverage
 *.log
 prisma/dev.db
+tsconfig.tsbuildinfo
 
 # случайные служебные файлы
 *.dump

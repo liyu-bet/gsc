@@ -253,7 +253,12 @@ export async function saveOrUpdateConnection(input: {
   });
 }
 
-export async function querySite(connectionId: string, siteUrl: string, body: Record<string, unknown>) {
+export async function querySite(
+  connectionId: string,
+  siteUrl: string,
+  body: Record<string, unknown>,
+  options?: { signal?: AbortSignal }
+) {
   const connection = await prisma.googleConnection.findUnique({ where: { id: connectionId } });
   if (!connection) {
     throw new Error('Connection not found');
@@ -270,6 +275,7 @@ export async function querySite(connectionId: string, siteUrl: string, body: Rec
     },
     cache: 'no-store',
     body: JSON.stringify(body),
+    signal: options?.signal,
   });
 
   if (!response.ok) {

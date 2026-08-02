@@ -273,3 +273,85 @@ At least one property must be marked **Show on dashboard**.
 ## 17. Production notes
 
 This version queries Search Console live. For a larger portfolio, the next step is to add a daily sync job and store historical snapshots in your own database. That will make the dashboard faster and give you a longer archive.
+
+## 18. LOW integration API
+
+Read-only machine-to-machine API for **The Life of Websites (LOW)**.
+
+Google OAuth access/refresh tokens, client secret, encryption keys, admin password, and database URL are **never** returned and are **never** copied to LOW. LOW authenticates with a shared service token only.
+
+### Auth
+
+- Header: `Authorization: Bearer <GSC_LOW_API_TOKEN>`
+- Missing/invalid token → `401`
+- If `GSC_LOW_API_TOKEN` is unset/empty → fail closed (`401`)
+- Do not pass the token in the query string
+- Admin browser cookies are not used for this API
+
+### Endpoints
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/integrations/low/health` | Liveness for the integration surface |
+| `GET` | `/api/integrations/low/properties` | Paginated GSC properties for sync |
+| `GET` | `/api/integrations/low/properties/:id/lifecycle` | Earliest available impression/click dates |
+
+### Properties query params
+
+- `limit` — default `100`, max `200`
+- `cursor` — opaque pagination cursor
+- `updatedSince` — optional ISO datetime filter
+
+Stable sort: `updatedAt ASC`, `id ASC`.
+
+### Example lifecycle response
+
+Dates are always `null` or inside the executed `[searchedFrom, searchedTo]` range (inclusive). Early stop after both dates are found reports only the windows that were actually queried.
+
+```json
+{
+  "propertyId": "prop_1",
+  "siteUrl": "sc-domain:example.com",
+  "firstImpressionDate": "2025-04-01",
+  "firstClickDate": "2025-04-02",
+  "searchedFrom": "2025-04-01",
+  "searchedTo": "2025-04-05",
+  "dateMeaning": "earliest_available_in_search_console_api",
+  "generatedAt": "2026-08-02T10:00:00.000Z"
+}
+```
+
+### Field meanings
+
+- `firstSeenAt` — when the property was first imported into **this GSC app** (`GscProperty.createdAt`), not a guaranteed Google Search Console add date
+- `dateMeaning: earliest_available_in_search_console_api` — earliest date among rows returned by the current Search Console API lookback, **not** a guaranteed first-ever historical date for the property
+- `searchedFrom` / `searchedTo` — calendar range that was actually queried (may be shorter than the configured lookback when both dates are found early)
+
+### Forbidden response fields
+
+Never returned: `encryptedAccess`, `encryptedRefresh`, access/refresh tokens, `tokenExpiry`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`, `ENCRYPTION_KEY`, `ADMIN_PASSWORD`, `DATABASE_URL`, or the `Authorization` header value.
+
+### Safe curl examples
+
+```bash
+curl -sS -H "Authorization: Bearer YOUR_GSC_LOW_API_TOKEN" \
+  "http://localhost:3000/api/integrations/low/health"
+
+curl -sS -H "Authorization: Bearer YOUR_GSC_LOW_API_TOKEN" \
+  "http://localhost:3000/api/integrations/low/properties?limit=100"
+
+curl -sS -H "Authorization: Bearer YOUR_GSC_LOW_API_TOKEN" \
+  "http://localhost:3000/api/integrations/low/properties/PROPERTY_ID/lifecycle"
+```
+
+### Env
+
+```env
+GSC_LOW_API_TOKEN=replace-with-a-long-random-token
+GSC_LIFECYCLE_LOOKBACK_DAYS=488
+GSC_LIFECYCLE_WINDOW_DAYS=90
+GSC_LIFECYCLE_TIMEOUT_MS=60000
+```
+
+Store the real token only in `.env` or deployment secrets. Never use `NEXT_PUBLIC_` for this value.
+
