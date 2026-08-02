@@ -33,8 +33,11 @@ export type SearchAnalyticsRow = {
   position?: number;
 };
 
+export type SearchAnalyticsDataState = 'all' | 'final' | 'hourly_all';
+
 export type SearchAnalyticsResponse = {
   rows?: SearchAnalyticsRow[];
+  responseAggregationType?: string;
   metadata?: {
     first_incomplete_date?: string;
     first_incomplete_hour?: string;

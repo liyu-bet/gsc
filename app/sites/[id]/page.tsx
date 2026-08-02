@@ -1,10 +1,8 @@
 import Link from 'next/link';
-import { format, parseISO } from 'date-fns';
-import { ru } from 'date-fns/locale';
 import { notFound } from 'next/navigation';
 import { requireAdmin } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { querySite, SearchAnalyticsRow } from '@/lib/google';
+import { querySite, SearchAnalyticsResponse, SearchAnalyticsRow } from '@/lib/google';
 import { countryName } from '@/lib/countries';
 import {
   buildComparisonRange,
@@ -12,7 +10,6 @@ import {
   enumerateDates,
   gscCalendarDate,
   normalizeGscDate,
-  parseAllowedRange,
   type AllowedRangeDays,
   type ComparisonDateRange,
 } from '@/lib/date-ranges';
@@ -23,18 +20,40 @@ import {
   metricDelta,
   positionImprovement,
   summarizeMetricRows,
-  weightedAveragePosition,
 } from '@/lib/metrics';
+import {
+  aggregateDetailRowsForWindow,
+  buildLatestHourlyWindows,
+  enrichAggregatedRows,
+  hoursAgoLabel,
+  hourlyFetchDateSpan,
+  normalizeDetailHourRows,
+  normalizeHourlyRows,
+  summarizeHourWindow,
+  type HourWindow,
+} from '@/lib/hourly-ranges';
+import { parsePeriodParams } from '@/lib/periods';
+import {
+  buildDailyRequest,
+  buildHourlyDetailRequest,
+  buildHourlyTotalsRequest,
+  type ActiveDimensionFilters,
+} from '@/lib/search-analytics-request';
 import { deviceLabel } from '@/lib/ui-labels';
-import { SiteTrendChart } from '@/components/site/SiteTrendChart';
+import { SiteTrendChart, type TrendSeriesPoint } from '@/components/site/SiteTrendChart';
 import { WorkspaceTable } from '@/components/site/WorkspaceTable';
 import { QueryCountingChart } from '@/components/site/QueryCountingChart';
 import { SiteControls } from '@/components/site/SiteControls';
 import { SiteFilterBar } from '@/components/site/SiteFilterBar';
+import { PeriodFreshness } from '@/components/site/PeriodFreshness';
+import { DataDiagnostics, type DiagnosticsPayload } from '@/components/site/DataDiagnostics';
 
 type SafeReport = {
   rows: SearchAnalyticsRow[];
   error?: string | null;
+  responseAggregationType?: string | null;
+  firstIncompleteDate?: string | null;
+  firstIncompleteHour?: string | null;
 };
 
 type EnrichedRow = {
@@ -50,29 +69,15 @@ type EnrichedRow = {
   active?: boolean;
 };
 
-type DailyMetric = {
-  label: string;
-  color: string;
-  current: number[];
-  previous: number[];
-  currentText: string;
-  previousText: string;
-  changeText: string;
-  changeClass: string;
-};
-
-type ActiveFilters = {
-  query?: string;
-  page?: string;
-  country?: string;
-  device?: string;
-};
+type ActiveFilters = ActiveDimensionFilters;
 
 type SiteSearchParams = {
+  period?: string;
   range?: string;
   searchType?: string;
   endDate?: string;
   startDate?: string;
+  compare?: string;
   query?: string;
   page?: string;
   country?: string;
@@ -80,6 +85,8 @@ type SiteSearchParams = {
 };
 
 const SEARCH_TYPES = new Set(['web', 'discover', 'news', 'image', 'video']);
+const DETAIL_PAGE_SIZE = 25000;
+const DETAIL_MAX_PAGES = 3;
 
 async function safeQuery(
   connectionId: string,
@@ -87,14 +94,64 @@ async function safeQuery(
   body: Record<string, unknown>
 ): Promise<SafeReport> {
   try {
-    const result = await querySite(connectionId, siteUrl, body);
-    return { rows: result.rows || [], error: null };
+    const result: SearchAnalyticsResponse = await querySite(connectionId, siteUrl, body);
+    return {
+      rows: result.rows || [],
+      error: null,
+      responseAggregationType: result.responseAggregationType || null,
+      firstIncompleteDate: result.metadata?.first_incomplete_date || null,
+      firstIncompleteHour: result.metadata?.first_incomplete_hour || null,
+    };
   } catch (error) {
     return {
       rows: [],
       error: error instanceof Error ? error.message : 'Неизвестная ошибка API',
+      responseAggregationType: null,
+      firstIncompleteDate: null,
+      firstIncompleteHour: null,
     };
   }
+}
+
+async function safeQueryPaginated(
+  connectionId: string,
+  siteUrl: string,
+  body: Record<string, unknown>
+): Promise<SafeReport & { truncated: boolean }> {
+  const allRows: SearchAnalyticsRow[] = [];
+  let truncated = false;
+  let firstIncompleteHour: string | null = null;
+  let firstIncompleteDate: string | null = null;
+  let responseAggregationType: string | null = null;
+  let error: string | null = null;
+
+  for (let page = 0; page < DETAIL_MAX_PAGES; page += 1) {
+    const startRow = page * DETAIL_PAGE_SIZE;
+    const result = await safeQuery(connectionId, siteUrl, {
+      ...body,
+      startRow,
+      rowLimit: DETAIL_PAGE_SIZE,
+    });
+    if (result.error) {
+      error = result.error;
+      break;
+    }
+    firstIncompleteHour = result.firstIncompleteHour || firstIncompleteHour;
+    firstIncompleteDate = result.firstIncompleteDate || firstIncompleteDate;
+    responseAggregationType = result.responseAggregationType || responseAggregationType;
+    allRows.push(...result.rows);
+    if (result.rows.length < DETAIL_PAGE_SIZE) break;
+    if (page === DETAIL_MAX_PAGES - 1) truncated = true;
+  }
+
+  return {
+    rows: allRows,
+    error,
+    truncated,
+    firstIncompleteHour,
+    firstIncompleteDate,
+    responseAggregationType,
+  };
 }
 
 function metricNumber(row: SearchAnalyticsRow | undefined, key: 'clicks' | 'impressions' | 'position') {
@@ -107,7 +164,6 @@ function mapRowsByKey(rows: SearchAnalyticsRow[]) {
 
 function enrichRows(currentRows: SearchAnalyticsRow[], previousRows: SearchAnalyticsRow[]): EnrichedRow[] {
   const previousMap = mapRowsByKey(previousRows);
-
   return currentRows
     .map((row) => {
       const key = row.keys?.[0] || '';
@@ -130,7 +186,11 @@ function sum(items: EnrichedRow[], selector: (item: EnrichedRow) => number): num
   return items.reduce((acc, item) => acc + selector(item), 0);
 }
 
-function weightedAverage(items: EnrichedRow[], valueSelector: (item: EnrichedRow) => number, weightSelector: (item: EnrichedRow) => number) {
+function weightedAverage(
+  items: EnrichedRow[],
+  valueSelector: (item: EnrichedRow) => number,
+  weightSelector: (item: EnrichedRow) => number
+) {
   const totalWeight = items.reduce((acc, item) => acc + weightSelector(item), 0);
   if (!totalWeight) return 0;
   return items.reduce((acc, item) => acc + valueSelector(item) * weightSelector(item), 0) / totalWeight;
@@ -138,56 +198,6 @@ function weightedAverage(items: EnrichedRow[], valueSelector: (item: EnrichedRow
 
 function trendClass(value: number) {
   return value >= 0 ? 'good' : 'bad';
-}
-
-function buildMetricSeries(dailyCurrent: AlignedDailyRow[], dailyPrevious: AlignedDailyRow[]): DailyMetric[] {
-  const currentClicks = dailyCurrent.map((row) => row.clicks);
-  const previousClicks = dailyPrevious.map((row) => row.clicks);
-  const currentImpressions = dailyCurrent.map((row) => row.impressions);
-  const previousImpressions = dailyPrevious.map((row) => row.impressions);
-  const currentPosition = dailyCurrent.map((row) => row.position);
-  const previousPosition = dailyPrevious.map((row) => row.position);
-
-  const currentTotals = summarizeMetricRows(dailyCurrent);
-  const previousTotals = summarizeMetricRows(dailyPrevious);
-  const clicksDelta = metricDelta(currentTotals.clicks, previousTotals.clicks);
-  const impressionsDelta = metricDelta(currentTotals.impressions, previousTotals.impressions);
-  const avgPosition = weightedAveragePosition(dailyCurrent);
-  const prevPosition = weightedAveragePosition(dailyPrevious);
-  const positionShift = positionImprovement(avgPosition, prevPosition);
-
-  return [
-    {
-      label: 'Клики',
-      color: '#2563eb',
-      current: currentClicks,
-      previous: previousClicks,
-      currentText: formatNumber(currentTotals.clicks),
-      previousText: formatNumber(previousTotals.clicks),
-      changeText: formatTrend(clicksDelta.deltaPct),
-      changeClass: trendClass(clicksDelta.deltaPct),
-    },
-    {
-      label: 'Показы',
-      color: '#7c3aed',
-      current: currentImpressions,
-      previous: previousImpressions,
-      currentText: formatNumber(currentTotals.impressions),
-      previousText: formatNumber(previousTotals.impressions),
-      changeText: formatTrend(impressionsDelta.deltaPct),
-      changeClass: trendClass(impressionsDelta.deltaPct),
-    },
-    {
-      label: 'Позиция',
-      color: '#ea580c',
-      current: currentPosition,
-      previous: previousPosition,
-      currentText: formatDecimal(avgPosition, 1),
-      previousText: formatDecimal(prevPosition, 1),
-      changeText: formatPositionShift(avgPosition, prevPosition),
-      changeClass: trendClass(positionShift),
-    },
-  ];
 }
 
 function formatTrend(value: number, digits = 1) {
@@ -203,10 +213,6 @@ function formatPositionShift(current: number, previous: number) {
 
 function normalizeSearchType(raw: string | undefined) {
   return SEARCH_TYPES.has(raw || 'web') ? (raw as string) : 'web';
-}
-
-function formatLabel(date: string) {
-  return format(parseISO(date), 'd MMM', { locale: ru });
 }
 
 function buildBucketSeries(rows: SearchAnalyticsRow[], labels: string[]) {
@@ -237,13 +243,6 @@ function formatDeviceName(value: string) {
   return deviceLabel(value);
 }
 
-function queryBase(searchType: string) {
-  return {
-    dataState: 'all' as const,
-    ...(searchType !== 'web' ? { type: searchType } : {}),
-  };
-}
-
 function buildDateRange(
   days: AllowedRangeDays,
   endDate: string,
@@ -261,27 +260,11 @@ function buildDateRange(
   return { ...custom, custom: true };
 }
 
-function buildFilterGroups(filters: ActiveFilters) {
-  const items = [] as Array<{ dimension: string; expression: string; operator: 'equals' }>;
-  if (filters.query) items.push({ dimension: 'query', expression: filters.query, operator: 'equals' });
-  if (filters.page) items.push({ dimension: 'page', expression: filters.page, operator: 'equals' });
-  if (filters.country) items.push({ dimension: 'country', expression: filters.country, operator: 'equals' });
-  if (filters.device) items.push({ dimension: 'device', expression: filters.device, operator: 'equals' });
-  return items.length ? [{ groupType: 'and', filters: items }] : undefined;
-}
-
-function queryBody(base: ReturnType<typeof queryBase>, startDate: string, endDate: string, dimensions: string[], rowLimit: number, filters: ActiveFilters) {
-  return {
-    startDate,
-    endDate,
-    dimensions,
-    rowLimit,
-    ...base,
-    ...(buildFilterGroups(filters) ? { dimensionFilterGroups: buildFilterGroups(filters) } : {}),
-  };
-}
-
-function siteHref(propertyId: string, params: SiteSearchParams, updates: Partial<Record<keyof SiteSearchParams, string | undefined>>) {
+function siteHref(
+  propertyId: string,
+  params: SiteSearchParams,
+  updates: Partial<Record<keyof SiteSearchParams, string | undefined>>
+) {
   const next = new URLSearchParams();
   const merged = { ...params, ...updates };
   for (const [key, value] of Object.entries(merged)) {
@@ -311,6 +294,24 @@ function alignDailyRows(alignedDates: string[], rows: SearchAnalyticsRow[]): Ali
   });
 }
 
+function windowToPoints(window: HourWindow): TrendSeriesPoint[] {
+  return window.rows.map((row) => ({
+    key: row.hour,
+    clicks: row.clicks,
+    impressions: row.impressions,
+    position: row.position ?? 0,
+  }));
+}
+
+function dailyToPoints(rows: AlignedDailyRow[]): TrendSeriesPoint[] {
+  return rows.map((row) => ({
+    key: row.date,
+    clicks: row.clicks,
+    impressions: row.impressions,
+    position: row.position,
+  }));
+}
+
 export default async function SiteDetailPage({
   params,
   searchParams,
@@ -321,11 +322,20 @@ export default async function SiteDetailPage({
   await requireAdmin();
   const { id } = await params;
   const incoming = (await searchParams) || {};
+  const fetchedAt = new Date();
 
-  const rangeDays = parseAllowedRange(incoming.range, 90);
+  const period = parsePeriodParams({
+    period: incoming.period,
+    range: incoming.range,
+    startDate: incoming.startDate,
+    endDate: incoming.endDate,
+  });
+
   const searchType = normalizeSearchType(incoming.searchType);
-  const endDate = normalizeGscDate(incoming.endDate, gscCalendarDate());
-  const startDate = incoming.startDate ? normalizeGscDate(incoming.startDate, endDate) : undefined;
+  const compareDefault = period.compareDefault;
+  const compare =
+    incoming.compare === '1' ? true : incoming.compare === '0' ? false : compareDefault;
+
   const activeFilters: ActiveFilters = {
     query: incoming.query,
     page: incoming.page,
@@ -340,45 +350,13 @@ export default async function SiteDetailPage({
 
   if (!property) notFound();
 
-  const range = buildDateRange(rangeDays, endDate, startDate);
-  const base = queryBase(searchType);
-
-  const [
-    dailyCurrent,
-    dailyPrevious,
-    pagesCurrent,
-    pagesPrevious,
-    queriesCurrent,
-    queriesPrevious,
-    devicesCurrent,
-    devicesPrevious,
-    countriesCurrent,
-    countriesPrevious,
-    queryCountDaily,
-  ] = await Promise.all([
-    safeQuery(property.connectionId, property.siteUrl, queryBody(base, range.startDate, range.endDate, ['date'], 400, activeFilters)),
-    safeQuery(property.connectionId, property.siteUrl, queryBody(base, range.previousStartDate, range.previousEndDate, ['date'], 400, activeFilters)),
-    safeQuery(property.connectionId, property.siteUrl, queryBody(base, range.startDate, range.endDate, ['page'], 250, activeFilters)),
-    safeQuery(property.connectionId, property.siteUrl, queryBody(base, range.previousStartDate, range.previousEndDate, ['page'], 250, activeFilters)),
-    safeQuery(property.connectionId, property.siteUrl, queryBody(base, range.startDate, range.endDate, ['query'], 250, activeFilters)),
-    safeQuery(property.connectionId, property.siteUrl, queryBody(base, range.previousStartDate, range.previousEndDate, ['query'], 250, activeFilters)),
-    safeQuery(property.connectionId, property.siteUrl, queryBody(base, range.startDate, range.endDate, ['device'], 20, activeFilters)),
-    safeQuery(property.connectionId, property.siteUrl, queryBody(base, range.previousStartDate, range.previousEndDate, ['device'], 20, activeFilters)),
-    safeQuery(property.connectionId, property.siteUrl, queryBody(base, range.startDate, range.endDate, ['country'], 100, activeFilters)),
-    safeQuery(property.connectionId, property.siteUrl, queryBody(base, range.previousStartDate, range.previousEndDate, ['country'], 100, activeFilters)),
-    safeQuery(property.connectionId, property.siteUrl, queryBody(base, range.startDate, range.endDate, ['date', 'query'], 25000, activeFilters)),
-  ]);
-
-  const alignedCurrentDates = enumerateDates(range.startDate, range.endDate);
-  const alignedPreviousDates = enumerateDates(range.previousStartDate, range.previousEndDate);
-  const alignedDailyCurrent = alignDailyRows(alignedCurrentDates, dailyCurrent.rows);
-  const alignedDailyPrevious = alignDailyRows(alignedPreviousDates, dailyPrevious.rows);
-
   const baseParams: SiteSearchParams = {
-    range: String(rangeDays),
+    period: period.id,
     searchType,
-    endDate,
-    ...(range.custom && startDate ? { startDate } : {}),
+    compare: compare ? '1' : '0',
+    ...(period.mode === 'custom' && incoming.startDate && incoming.endDate
+      ? { startDate: incoming.startDate, endDate: incoming.endDate }
+      : {}),
     ...activeFilters,
   };
 
@@ -393,93 +371,496 @@ export default async function SiteDetailPage({
     });
   }
 
-  const pageRows = attachHref(enrichRows(pagesCurrent.rows, pagesPrevious.rows), 'page');
-  const queryRows = attachHref(enrichRows(queriesCurrent.rows, queriesPrevious.rows), 'query');
-  const deviceRows = attachHref(
-    enrichRows(devicesCurrent.rows, devicesPrevious.rows).map((row) => ({
-      ...row,
-      key: formatDeviceName(row.key),
-      rawKey: row.rawKey,
-    })),
-    'device'
-  );
-  const countryRows = attachHref(
-    enrichRows(countriesCurrent.rows, countriesPrevious.rows).map((row) => ({
-      ...row,
-      key: countryName(row.key),
-      rawKey: row.rawKey,
-    })),
-    'country'
-  );
+  let pageRows: EnrichedRow[] = [];
+  let queryRows: EnrichedRow[] = [];
+  let deviceRows: EnrichedRow[] = [];
+  let countryRows: EnrichedRow[] = [];
+  let newRankings: EnrichedRow[] = [];
+  let chartMode: 'hourly' | 'daily' = 'daily';
+  let currentPoints: TrendSeriesPoint[] = [];
+  let previousPoints: TrendSeriesPoint[] = [];
+  let firstIncompleteKey: string | null = null;
+  let bucketSeries: ReturnType<typeof buildBucketSeries> | null = null;
+  let bucketLabels: string[] = [];
+  let hideQueryCounting = false;
+  let detailTruncated = false;
+  let errors: string[] = [];
+  let diagnostics: DiagnosticsPayload | null = null;
+  let totalsCurrent = { clicks: 0, impressions: 0, position: 0 };
+  let totalsPrevious = { clicks: 0, impressions: 0, position: 0 };
+  let latestAvailableHour: string | null = null;
+  let firstIncompleteHour: string | null = null;
+  let currentWindowStart: string | null = null;
+  let currentWindowEnd: string | null = null;
+  let previousWindowStart: string | null = null;
+  let previousWindowEnd: string | null = null;
+  let dailyStart: string | null = null;
+  let dailyEnd: string | null = null;
+  let hourlyRowCount = 0;
+  let aggregationType: string | null = null;
+  let responseAggregationType: string | null = null;
+  let apiDimensions: string[] = ['date'];
+  let apiDataState = 'all';
 
-  const newRankings = attachHref(
-    enrichRows(queriesCurrent.rows, queriesPrevious.rows)
-      .filter((row) => row.previousImpressions === 0 && row.impressions > 0)
-      .sort((a, b) => b.impressions - a.impressions)
-      .slice(0, 50),
-    'query'
-  );
+  if (period.mode === 'hourly') {
+    chartMode = 'hourly';
+    hideQueryCounting = true;
+    const span = hourlyFetchDateSpan(fetchedAt, 72);
+    const totalsBody = buildHourlyTotalsRequest({
+      startDate: span.startDate,
+      endDate: span.endDate,
+      searchType,
+      filters: activeFilters,
+    });
+    aggregationType = totalsBody.aggregationType || null;
+    apiDimensions = totalsBody.dimensions;
+    apiDataState = totalsBody.dataState;
 
-  const chartSeries = buildMetricSeries(alignedDailyCurrent, alignedDailyPrevious);
-  const currentLabels = alignedDailyCurrent.map((row) => formatLabel(row.date));
-  const previousLabels = alignedDailyPrevious.map((row) => formatLabel(row.date));
-  const bucketSeries = buildBucketSeries(queryCountDaily.rows, alignedCurrentDates);
+    const hourlyTotals = await safeQuery(property.connectionId, property.siteUrl, totalsBody);
+    responseAggregationType = hourlyTotals.responseAggregationType || null;
+    firstIncompleteHour = hourlyTotals.firstIncompleteHour || null;
+    firstIncompleteKey = firstIncompleteHour;
+    if (hourlyTotals.error) errors.push(hourlyTotals.error);
 
-  const currentQueryCount = queriesCurrent.rows.length;
-  const previousQueryCount = queriesPrevious.rows.length;
-  const currentPageCount = pagesCurrent.rows.length;
-  const previousPageCount = pagesPrevious.rows.length;
-  const queryCountDelta = currentQueryCount - previousQueryCount;
+    const normalized = normalizeHourlyRows(hourlyTotals.rows);
+    hourlyRowCount = normalized.length;
+    const windows = buildLatestHourlyWindows(normalized, 24);
+    latestAvailableHour = windows.latestAvailableHour;
+    currentWindowStart = windows.current.start || null;
+    currentWindowEnd = windows.current.end || null;
+    previousWindowStart = windows.previous.start || null;
+    previousWindowEnd = windows.previous.end || null;
+    currentPoints = windowToPoints(windows.current);
+    previousPoints = windowToPoints(windows.previous);
+    totalsCurrent = summarizeHourWindow(windows.current);
+    totalsPrevious = summarizeHourWindow(windows.previous);
+
+    const detailDims = ['query', 'page', 'country', 'device'] as const;
+    const detailReports = await Promise.all(
+      detailDims.map((secondaryDimension) =>
+        safeQueryPaginated(
+          property.connectionId,
+          property.siteUrl,
+          buildHourlyDetailRequest({
+            startDate: span.startDate,
+            endDate: span.endDate,
+            secondaryDimension,
+            searchType,
+            filters: activeFilters,
+          })
+        )
+      )
+    );
+
+    for (const report of detailReports) {
+      if (report.error) errors.push(report.error);
+      if (report.truncated) detailTruncated = true;
+    }
+
+    const [queriesDetail, pagesDetail, countriesDetail, devicesDetail] = detailReports;
+    const queriesNorm = normalizeDetailHourRows(queriesDetail.rows);
+    const pagesNorm = normalizeDetailHourRows(pagesDetail.rows);
+    const countriesNorm = normalizeDetailHourRows(countriesDetail.rows);
+    const devicesNorm = normalizeDetailHourRows(devicesDetail.rows);
+
+    queryRows = attachHref(
+      enrichAggregatedRows(
+        aggregateDetailRowsForWindow(queriesNorm, windows.current),
+        aggregateDetailRowsForWindow(queriesNorm, windows.previous)
+      ),
+      'query'
+    );
+    pageRows = attachHref(
+      enrichAggregatedRows(
+        aggregateDetailRowsForWindow(pagesNorm, windows.current),
+        aggregateDetailRowsForWindow(pagesNorm, windows.previous)
+      ),
+      'page'
+    );
+    countryRows = attachHref(
+      enrichAggregatedRows(
+        aggregateDetailRowsForWindow(countriesNorm, windows.current),
+        aggregateDetailRowsForWindow(countriesNorm, windows.previous)
+      ).map((row) => ({ ...row, key: countryName(row.key), rawKey: row.rawKey })),
+      'country'
+    );
+    deviceRows = attachHref(
+      enrichAggregatedRows(
+        aggregateDetailRowsForWindow(devicesNorm, windows.current),
+        aggregateDetailRowsForWindow(devicesNorm, windows.previous)
+      ).map((row) => ({ ...row, key: formatDeviceName(row.key), rawKey: row.rawKey })),
+      'device'
+    );
+    newRankings = attachHref(
+      enrichAggregatedRows(
+        aggregateDetailRowsForWindow(queriesNorm, windows.current),
+        aggregateDetailRowsForWindow(queriesNorm, windows.previous)
+      )
+        .filter((row) => row.previousImpressions === 0 && row.impressions > 0)
+        .sort((a, b) => b.impressions - a.impressions)
+        .slice(0, 50),
+      'query'
+    );
+
+    diagnostics = {
+      siteUrl: property.siteUrl,
+      searchType,
+      aggregationType,
+      responseAggregationType,
+      activeFilters,
+      dataState: apiDataState,
+      dimensions: apiDimensions,
+      currentWindowStart,
+      currentWindowEnd,
+      previousWindowStart,
+      previousWindowEnd,
+      latestAvailableHour,
+      firstIncompleteHour,
+      fetchedAt: fetchedAt.toISOString(),
+      hourlyRowCount,
+      totals: totalsCurrent,
+    };
+  } else {
+    const endDate = normalizeGscDate(
+      period.mode === 'custom' ? incoming.endDate : undefined,
+      gscCalendarDate()
+    );
+    const startDate =
+      period.mode === 'custom' && incoming.startDate
+        ? normalizeGscDate(incoming.startDate, endDate)
+        : undefined;
+    const days = period.mode === 'daily' ? period.days : 28;
+    const range = buildDateRange(days, endDate, startDate);
+    dailyStart = range.startDate;
+    dailyEnd = range.endDate;
+
+    const [
+      dailyCurrent,
+      dailyPrevious,
+      pagesCurrent,
+      pagesPrevious,
+      queriesCurrent,
+      queriesPrevious,
+      devicesCurrent,
+      devicesPrevious,
+      countriesCurrent,
+      countriesPrevious,
+      queryCountDaily,
+    ] = await Promise.all([
+      safeQuery(
+        property.connectionId,
+        property.siteUrl,
+        buildDailyRequest({
+          startDate: range.startDate,
+          endDate: range.endDate,
+          dimensions: ['date'],
+          rowLimit: 400,
+          searchType,
+          filters: activeFilters,
+        })
+      ),
+      safeQuery(
+        property.connectionId,
+        property.siteUrl,
+        buildDailyRequest({
+          startDate: range.previousStartDate,
+          endDate: range.previousEndDate,
+          dimensions: ['date'],
+          rowLimit: 400,
+          searchType,
+          filters: activeFilters,
+        })
+      ),
+      safeQuery(
+        property.connectionId,
+        property.siteUrl,
+        buildDailyRequest({
+          startDate: range.startDate,
+          endDate: range.endDate,
+          dimensions: ['page'],
+          rowLimit: 250,
+          searchType,
+          filters: activeFilters,
+        })
+      ),
+      safeQuery(
+        property.connectionId,
+        property.siteUrl,
+        buildDailyRequest({
+          startDate: range.previousStartDate,
+          endDate: range.previousEndDate,
+          dimensions: ['page'],
+          rowLimit: 250,
+          searchType,
+          filters: activeFilters,
+        })
+      ),
+      safeQuery(
+        property.connectionId,
+        property.siteUrl,
+        buildDailyRequest({
+          startDate: range.startDate,
+          endDate: range.endDate,
+          dimensions: ['query'],
+          rowLimit: 250,
+          searchType,
+          filters: activeFilters,
+        })
+      ),
+      safeQuery(
+        property.connectionId,
+        property.siteUrl,
+        buildDailyRequest({
+          startDate: range.previousStartDate,
+          endDate: range.previousEndDate,
+          dimensions: ['query'],
+          rowLimit: 250,
+          searchType,
+          filters: activeFilters,
+        })
+      ),
+      safeQuery(
+        property.connectionId,
+        property.siteUrl,
+        buildDailyRequest({
+          startDate: range.startDate,
+          endDate: range.endDate,
+          dimensions: ['device'],
+          rowLimit: 20,
+          searchType,
+          filters: activeFilters,
+        })
+      ),
+      safeQuery(
+        property.connectionId,
+        property.siteUrl,
+        buildDailyRequest({
+          startDate: range.previousStartDate,
+          endDate: range.previousEndDate,
+          dimensions: ['device'],
+          rowLimit: 20,
+          searchType,
+          filters: activeFilters,
+        })
+      ),
+      safeQuery(
+        property.connectionId,
+        property.siteUrl,
+        buildDailyRequest({
+          startDate: range.startDate,
+          endDate: range.endDate,
+          dimensions: ['country'],
+          rowLimit: 100,
+          searchType,
+          filters: activeFilters,
+        })
+      ),
+      safeQuery(
+        property.connectionId,
+        property.siteUrl,
+        buildDailyRequest({
+          startDate: range.previousStartDate,
+          endDate: range.previousEndDate,
+          dimensions: ['country'],
+          rowLimit: 100,
+          searchType,
+          filters: activeFilters,
+        })
+      ),
+      safeQuery(
+        property.connectionId,
+        property.siteUrl,
+        buildDailyRequest({
+          startDate: range.startDate,
+          endDate: range.endDate,
+          dimensions: ['date', 'query'],
+          rowLimit: 25000,
+          searchType,
+          filters: activeFilters,
+        })
+      ),
+    ]);
+
+    errors = [
+      dailyCurrent,
+      dailyPrevious,
+      pagesCurrent,
+      pagesPrevious,
+      queriesCurrent,
+      queriesPrevious,
+      devicesCurrent,
+      devicesPrevious,
+      countriesCurrent,
+      countriesPrevious,
+      queryCountDaily,
+    ]
+      .map((report) => report.error)
+      .filter(Boolean) as string[];
+
+    firstIncompleteKey = dailyCurrent.firstIncompleteDate || null;
+    const alignedCurrentDates = enumerateDates(range.startDate, range.endDate);
+    const alignedPreviousDates = enumerateDates(range.previousStartDate, range.previousEndDate);
+    const alignedDailyCurrent = alignDailyRows(alignedCurrentDates, dailyCurrent.rows);
+    const alignedDailyPrevious = alignDailyRows(alignedPreviousDates, dailyPrevious.rows);
+    currentPoints = dailyToPoints(alignedDailyCurrent);
+    previousPoints = dailyToPoints(alignedDailyPrevious);
+    totalsCurrent = summarizeMetricRows(alignedDailyCurrent);
+    totalsPrevious = summarizeMetricRows(alignedDailyPrevious);
+    bucketLabels = alignedCurrentDates;
+    bucketSeries = buildBucketSeries(queryCountDaily.rows, alignedCurrentDates);
+
+    pageRows = attachHref(enrichRows(pagesCurrent.rows, pagesPrevious.rows), 'page');
+    queryRows = attachHref(enrichRows(queriesCurrent.rows, queriesPrevious.rows), 'query');
+    deviceRows = attachHref(
+      enrichRows(devicesCurrent.rows, devicesPrevious.rows).map((row) => ({
+        ...row,
+        key: formatDeviceName(row.key),
+        rawKey: row.rawKey,
+      })),
+      'device'
+    );
+    countryRows = attachHref(
+      enrichRows(countriesCurrent.rows, countriesPrevious.rows).map((row) => ({
+        ...row,
+        key: countryName(row.key),
+        rawKey: row.rawKey,
+      })),
+      'country'
+    );
+    newRankings = attachHref(
+      enrichRows(queriesCurrent.rows, queriesPrevious.rows)
+        .filter((row) => row.previousImpressions === 0 && row.impressions > 0)
+        .sort((a, b) => b.impressions - a.impressions)
+        .slice(0, 50),
+      'query'
+    );
+
+    diagnostics = {
+      siteUrl: property.siteUrl,
+      searchType,
+      aggregationType: null,
+      responseAggregationType: dailyCurrent.responseAggregationType || null,
+      activeFilters,
+      dataState: 'all',
+      dimensions: ['date'],
+      currentWindowStart: range.startDate,
+      currentWindowEnd: range.endDate,
+      previousWindowStart: range.previousStartDate,
+      previousWindowEnd: range.previousEndDate,
+      latestAvailableHour: null,
+      firstIncompleteHour: null,
+      fetchedAt: fetchedAt.toISOString(),
+      hourlyRowCount: 0,
+      totals: totalsCurrent,
+    };
+  }
+
+  const clicksDelta = metricDelta(totalsCurrent.clicks, totalsPrevious.clicks);
+  const impressionsDelta = metricDelta(totalsCurrent.impressions, totalsPrevious.impressions);
+  const positionShift = positionImprovement(totalsCurrent.position, totalsPrevious.position);
+
+  const chartCards = [
+    {
+      key: 'clicks' as const,
+      label: 'Клики',
+      color: '#2563eb',
+      valueText: formatNumber(totalsCurrent.clicks),
+      changeText: formatTrend(clicksDelta.deltaPct),
+      changeClass: trendClass(clicksDelta.deltaPct),
+    },
+    {
+      key: 'impressions' as const,
+      label: 'Показы',
+      color: '#7c3aed',
+      valueText: formatNumber(totalsCurrent.impressions),
+      changeText: formatTrend(impressionsDelta.deltaPct),
+      changeClass: trendClass(impressionsDelta.deltaPct),
+    },
+    {
+      key: 'position' as const,
+      label: 'Средняя позиция',
+      color: '#ea580c',
+      valueText: formatDecimal(totalsCurrent.position, 1),
+      changeText: formatPositionShift(totalsCurrent.position, totalsPrevious.position),
+      changeClass: trendClass(positionShift),
+    },
+  ];
+
+  const currentQueryCount = queryRows.length;
+  const previousQueryCount = queryRows.filter((row) => row.previousImpressions > 0 || row.previousClicks > 0)
+    .length;
+  // Approximate previous count from rows that had previous metrics; for daily path previous API length is better.
+  const queryCountDelta =
+    period.mode === 'hourly'
+      ? currentQueryCount - previousQueryCount
+      : currentQueryCount - previousQueryCount;
+  const currentPageCount = pageRows.length;
+  const previousPageCount = pageRows.filter((row) => row.previousImpressions > 0 || row.previousClicks > 0)
+    .length;
   const pageCountDelta = currentPageCount - previousPageCount;
 
   const overviewCards = [
     {
       label: 'Запросы в выдаче',
       current: formatNumber(currentQueryCount),
-      change: formatCountDelta(queryCountDelta, 'query', 'queries'),
+      change: compare ? formatCountDelta(queryCountDelta, 'query', 'queries') : '',
       changeClass: countDeltaClass(queryCountDelta),
     },
     {
       label: 'Страницы в выдаче',
       current: formatNumber(currentPageCount),
-      change: formatCountDelta(pageCountDelta, 'page', 'pages'),
+      change: compare ? formatCountDelta(pageCountDelta, 'page', 'pages') : '',
       changeClass: countDeltaClass(pageCountDelta),
     },
     {
       label: 'Страны',
       current: formatNumber(countryRows.length),
-      change: formatTrend(metricDelta(sum(countryRows, (row) => row.clicks), sum(countryRows, (row) => row.previousClicks)).deltaPct),
-      changeClass: trendClass(metricDelta(sum(countryRows, (row) => row.clicks), sum(countryRows, (row) => row.previousClicks)).deltaPct),
+      change: compare
+        ? formatTrend(
+            metricDelta(sum(countryRows, (row) => row.clicks), sum(countryRows, (row) => row.previousClicks))
+              .deltaPct
+          )
+        : '',
+      changeClass: trendClass(
+        metricDelta(sum(countryRows, (row) => row.clicks), sum(countryRows, (row) => row.previousClicks)).deltaPct
+      ),
     },
     {
       label: 'Устройства',
       current: formatNumber(deviceRows.length),
-      change: `${formatDecimal(weightedAverage(deviceRows, (row) => row.position, (row) => row.impressions), 1)} ср. поз.`,
+      change: `${formatDecimal(
+        weightedAverage(
+          deviceRows,
+          (row) => row.position,
+          (row) => row.impressions
+        ),
+        1
+      )} ср. поз.`,
       changeClass: 'good',
     },
   ];
 
-  const errors = [
-    dailyCurrent,
-    dailyPrevious,
-    pagesCurrent,
-    pagesPrevious,
-    queriesCurrent,
-    queriesPrevious,
-    devicesCurrent,
-    devicesPrevious,
-    countriesCurrent,
-    countriesPrevious,
-    queryCountDaily,
-  ]
-    .map((report) => report.error)
-    .filter(Boolean) as string[];
-
   const filterChipData = [
-    activeFilters.query ? { label: 'Запрос', value: activeFilters.query, href: siteHref(id, baseParams, { query: undefined }) } : null,
-    activeFilters.page ? { label: 'Страница', value: activeFilters.page, href: siteHref(id, baseParams, { page: undefined }) } : null,
-    activeFilters.country ? { label: 'Страна', value: countryName(activeFilters.country), href: siteHref(id, baseParams, { country: undefined }) } : null,
-    activeFilters.device ? { label: 'Устройство', value: formatDeviceName(activeFilters.device), href: siteHref(id, baseParams, { device: undefined }) } : null,
+    activeFilters.query
+      ? { label: 'Запрос', value: activeFilters.query, href: siteHref(id, baseParams, { query: undefined }) }
+      : null,
+    activeFilters.page
+      ? { label: 'Страница', value: activeFilters.page, href: siteHref(id, baseParams, { page: undefined }) }
+      : null,
+    activeFilters.country
+      ? {
+          label: 'Страна',
+          value: countryName(activeFilters.country),
+          href: siteHref(id, baseParams, { country: undefined }),
+        }
+      : null,
+    activeFilters.device
+      ? {
+          label: 'Устройство',
+          value: formatDeviceName(activeFilters.device),
+          href: siteHref(id, baseParams, { device: undefined }),
+        }
+      : null,
   ].filter(Boolean) as Array<{ label: string; value: string; href: string }>;
 
   const clearFiltersHref = siteHref(id, baseParams, {
@@ -488,6 +869,8 @@ export default async function SiteDetailPage({
     country: undefined,
     device: undefined,
   });
+
+  const updatedLabel = hoursAgoLabel(latestAvailableHour, fetchedAt);
 
   return (
     <main className="page-shell site-shell">
@@ -498,12 +881,13 @@ export default async function SiteDetailPage({
             <h1>{property.label || property.siteUrl}</h1>
             <p className="muted">{property.siteUrl}</p>
             <p className="muted">Подключённый аккаунт Google: {property.connection.email}</p>
-            <p className="muted">
-              Текущий период: {range.startDate} → {range.endDate} · Последняя доступная дата: {gscCalendarDate()}
-            </p>
           </div>
           <div className="header-actions">
-            <Link className="button ghost small" href={`/dashboard?range=${rangeDays}&searchType=${searchType}`} prefetch>
+            <Link
+              className="button ghost small"
+              href={`/dashboard?period=${period.id === 'custom' ? '28d' : period.id}&searchType=${searchType}`}
+              prefetch
+            >
               Назад к панели
             </Link>
           </div>
@@ -514,7 +898,7 @@ export default async function SiteDetailPage({
             <div key={card.label} className="site-top-card">
               <span>{card.label}</span>
               <strong>{card.current}</strong>
-              <em className={card.changeClass}>{card.change}</em>
+              {card.change ? <em className={card.changeClass}>{card.change}</em> : null}
             </div>
           ))}
         </div>
@@ -522,12 +906,23 @@ export default async function SiteDetailPage({
 
       <section className="panel site-detail-panel site-controls-panel">
         <SiteControls
-          currentRange={rangeDays}
+          currentPeriodId={period.id}
           currentSearchType={searchType}
-          currentEndDate={endDate}
-          currentStartDate={startDate}
-          latestDate={gscCalendarDate()}
-          isCustom={range.custom}
+          currentStartDate={period.mode === 'custom' ? incoming.startDate : undefined}
+          currentEndDate={period.mode === 'custom' ? incoming.endDate : undefined}
+          compare={compare}
+          isCustom={period.mode === 'custom'}
+          clearFiltersHref={clearFiltersHref}
+        />
+        <PeriodFreshness
+          mode={period.mode === 'hourly' ? 'hourly' : period.mode === 'custom' ? 'custom' : 'daily'}
+          currentStart={currentWindowStart}
+          currentEnd={currentWindowEnd}
+          latestAvailableHour={latestAvailableHour}
+          firstIncompleteHour={firstIncompleteHour}
+          dailyStart={dailyStart}
+          dailyEnd={dailyEnd}
+          updatedLabel={updatedLabel}
         />
       </section>
 
@@ -535,12 +930,27 @@ export default async function SiteDetailPage({
 
       {errors.length > 0 ? (
         <div className="alert error">
-          Часть отчётов для этого сайта не загрузилась. Если ресурс недавно удалили в Search Console, нажмите «Обновить сайты» у подключения на панели — устаревшие ресурсы исчезнут из базы приложения.
+          Часть отчётов для этого сайта не загрузилась. Если ресурс недавно удалили в Search Console, нажмите
+          «Обновить сайты» у подключения на панели — устаревшие ресурсы исчезнут из базы приложения.
+        </div>
+      ) : null}
+
+      {detailTruncated ? (
+        <div className="alert warning subtle-warning">
+          Детальные таблицы могут быть усечены из‑за лимита строк API. Сводные клики и показы посчитаны по
+          отдельному почасовому totals-запросу и не зависят от этих таблиц.
         </div>
       ) : null}
 
       <section className="panel site-detail-panel">
-        <SiteTrendChart series={chartSeries} labels={currentLabels} previousLabels={previousLabels} />
+        <SiteTrendChart
+          mode={chartMode}
+          currentPoints={currentPoints}
+          previousPoints={compare ? previousPoints : []}
+          compare={compare}
+          firstIncompleteKey={firstIncompleteKey}
+          cards={chartCards}
+        />
       </section>
 
       <section className="grid two-columns site-grid-gap">
@@ -549,7 +959,24 @@ export default async function SiteDetailPage({
       </section>
 
       <section className="grid two-columns site-grid-gap">
-        <QueryCountingChart labels={alignedCurrentDates.map((item) => formatLabel(item))} series={bucketSeries} />
+        {hideQueryCounting ? (
+          <div className="panel site-detail-panel">
+            <h3>Число запросов</h3>
+            <p className="muted">
+              В режиме «24 часа» дневной график числа запросов скрыт: для него нужна почасовая серия hour+query,
+              которая может быть усечена лимитом API. Используйте таблицу «Запросы» ниже.
+            </p>
+          </div>
+        ) : bucketSeries ? (
+          <QueryCountingChart
+            labels={bucketLabels.map((item) =>
+              new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short' }).format(
+                new Date(`${item}T12:00:00`)
+              )
+            )}
+            series={bucketSeries}
+          />
+        ) : null}
         <WorkspaceTable title="Страны" rows={countryRows} keyLabel="Страна" />
       </section>
 
@@ -557,6 +984,8 @@ export default async function SiteDetailPage({
         <WorkspaceTable title="Новые позиции" rows={newRankings} keyLabel="Запрос" />
         <WorkspaceTable title="Устройства" rows={deviceRows} keyLabel="Устройство" />
       </section>
+
+      {diagnostics ? <DataDiagnostics data={diagnostics} /> : null}
     </main>
   );
 }

@@ -3,8 +3,8 @@
 import { useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { rangeLabel, searchTypeLabel } from '@/lib/ui-labels';
-import { ALLOWED_RANGE_DAYS } from '@/lib/date-ranges';
+import { searchTypeLabel } from '@/lib/ui-labels';
+import { PERIOD_PRESETS, periodToQueryParams } from '@/lib/periods';
 
 const METRIC_OPTIONS = [
   { key: 'clicks', label: 'Клики', icon: '✦' },
@@ -27,19 +27,24 @@ const SEARCH_TYPES = [
   { key: 'video', label: searchTypeLabel('video') },
 ] as const;
 
-const RANGE_OPTIONS = ALLOWED_RANGE_DAYS.map((days) => ({
-  key: String(days),
-  days,
-}));
+const PERIOD_OPTIONS = PERIOD_PRESETS.filter((item) => item.id !== 'custom');
 
 const STORAGE_KEY = 'gsk-dashboard-preferences';
 const GLOBAL_STORAGE_KEY = 'gsk-global-preferences';
 
 type MetricKey = (typeof METRIC_OPTIONS)[number]['key'];
 
+function scrubLegacy(raw: Record<string, unknown>) {
+  const next = { ...raw };
+  delete next.startDate;
+  delete next.endDate;
+  delete next.customOpen;
+  return next;
+}
+
 export function DashboardToolbar({
   compare,
-  range,
+  periodId,
   search,
   searchType,
   sort,
@@ -47,7 +52,7 @@ export function DashboardToolbar({
   endDate,
 }: {
   compare: boolean;
-  range: number;
+  periodId: string;
   search: string;
   searchType: string;
   sort: string;
@@ -57,36 +62,45 @@ export function DashboardToolbar({
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
-
   const queryString = useMemo(() => searchParams.toString(), [searchParams]);
 
   useEffect(() => {
-    const payload = {
-      range: String(range),
+    const payload = scrubLegacy({
+      period: periodId,
       searchType,
       compare: compare ? '1' : '0',
       metrics: visibleMetrics.join(','),
-    };
+    });
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     window.localStorage.setItem(
       GLOBAL_STORAGE_KEY,
       JSON.stringify({
-        range: String(range),
+        period: periodId,
         searchType,
       })
     );
-  }, [range, searchType, compare, visibleMetrics]);
+  }, [periodId, searchType, compare, visibleMetrics]);
 
   useEffect(() => {
     const params = new URLSearchParams(queryString);
     let changed = false;
 
+    if (!params.get('period') && params.get('range') === '1') {
+      params.set('period', '24h');
+      params.delete('range');
+      changed = true;
+    }
+
     try {
       const dashboardRaw = window.localStorage.getItem(STORAGE_KEY);
       if (dashboardRaw) {
-        const stored = JSON.parse(dashboardRaw) as Record<string, string>;
-        for (const key of ['range', 'searchType', 'compare', 'metrics'] as const) {
+        const stored = scrubLegacy(JSON.parse(dashboardRaw) as Record<string, unknown>) as Record<
+          string,
+          string
+        >;
+        for (const key of ['period', 'searchType', 'compare', 'metrics'] as const) {
           if (!params.get(key) && stored[key]) {
+            if (key === 'period' && params.get('range')) continue;
             const value =
               key === 'metrics'
                 ? stored[key]
@@ -105,9 +119,12 @@ export function DashboardToolbar({
 
       const globalRaw = window.localStorage.getItem(GLOBAL_STORAGE_KEY);
       if (globalRaw) {
-        const storedGlobal = JSON.parse(globalRaw) as Record<string, string>;
-        for (const key of ['range', 'searchType'] as const) {
-          if (!params.get(key) && storedGlobal[key]) {
+        const storedGlobal = scrubLegacy(JSON.parse(globalRaw) as Record<string, unknown>) as Record<
+          string,
+          string
+        >;
+        for (const key of ['period', 'searchType'] as const) {
+          if (!params.get(key) && !params.get('range') && storedGlobal[key]) {
             params.set(key, storedGlobal[key]);
             changed = true;
           }
@@ -123,15 +140,12 @@ export function DashboardToolbar({
     }
   }, [pathname, queryString, router]);
 
-  function buildHref(nextValues: Partial<Record<string, string>>) {
+  function buildHref(nextValues: Partial<Record<string, string | undefined>>) {
     const params = new URLSearchParams(queryString);
 
     for (const [key, value] of Object.entries(nextValues)) {
-      if (!value) {
-        params.delete(key);
-      } else {
-        params.set(key, value);
-      }
+      if (!value) params.delete(key);
+      else params.set(key, value);
     }
 
     const query = params.toString();
@@ -155,7 +169,7 @@ export function DashboardToolbar({
         <form action="/dashboard" className="search-form" method="get">
           <input defaultValue={search} name="q" placeholder="Поиск" type="search" />
           <input type="hidden" name="sort" value={sort} />
-          <input type="hidden" name="range" value={range} />
+          <input type="hidden" name="period" value={periodId} />
           <input type="hidden" name="searchType" value={searchType} />
           <input type="hidden" name="compare" value={compare ? '1' : '0'} />
           <input type="hidden" name="metrics" value={visibleMetrics.join(',')} />
@@ -199,7 +213,7 @@ export function DashboardToolbar({
             <div className="menu-group">
               <div className="menu-label">Сравнение</div>
               <Link className={compare ? 'menu-item active' : 'menu-item'} href={buildHref({ compare: '1' })}>
-                Линия прошлого периода
+                С предыдущим периодом
               </Link>
               <Link className={!compare ? 'menu-item active' : 'menu-item'} href={buildHref({ compare: '0' })}>
                 Выключено
@@ -222,20 +236,37 @@ export function DashboardToolbar({
         </div>
 
         <div className="site-control-group dashboard-range-group">
-          <label htmlFor="dashboard-range">Период</label>
+          <label htmlFor="dashboard-period">Период</label>
           <select
-            id="dashboard-range"
+            id="dashboard-period"
             className="site-control-select"
-            value={String(range)}
-            onChange={(event) => router.push(buildHref({ range: event.target.value }))}
+            value={periodId}
+            onChange={(event) => {
+              const nextId = event.target.value;
+              const resolved =
+                nextId === '24h'
+                  ? ({ id: '24h', mode: 'hourly', compareDefault: false } as const)
+                  : ({ id: nextId, mode: 'daily', days: 28, compareDefault: true } as const);
+              const periodParams = periodToQueryParams(resolved);
+              router.push(
+                buildHref({
+                  period: periodParams.period,
+                  range: undefined,
+                  startDate: undefined,
+                  endDate: undefined,
+                })
+              );
+            }}
           >
-            {RANGE_OPTIONS.map((option) => (
-              <option key={option.key} value={option.key}>
-                {rangeLabel(option.days)}
+            {PERIOD_OPTIONS.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
               </option>
             ))}
           </select>
-          <span className="toolbar-last-date">Последняя доступная дата: {endDate}</span>
+          {periodId !== '24h' ? (
+            <span className="toolbar-last-date">Последняя доступная дата: {endDate}</span>
+          ) : null}
         </div>
       </div>
     </section>

@@ -1541,3 +1541,133 @@ tbody td {
     top: 8px;
   }
 }
+.period-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.period-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: #fff;
+  color: var(--text);
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+.period-chip.active {
+  background: #eef4ff;
+  border-color: #bfd3ff;
+  font-weight: 600;
+}
+
+.site-controls-compact {
+  align-items: center;
+  gap: 14px;
+}
+
+.site-control-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.site-control-inline label {
+  margin: 0;
+}
+
+.site-control-inline .site-control-select {
+  min-width: 140px;
+}
+
+.compare-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.site-control-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.period-range-summary {
+  margin-top: 12px;
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.metric-toggle-copy {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.metric-toggle-copy strong {
+  font-size: 1.05rem;
+}
+
+.metric-toggle-copy em {
+  font-style: normal;
+  font-size: 0.8rem;
+}
+
+.site-tooltip-head.single,
+.site-tooltip-row.single {
+  grid-template-columns: 1.4fr 0.8fr;
+}
+
+.site-chart-caption,
+.site-chart-legend-note {
+  font-size: 0.82rem;
+}
+
+.data-diagnostics summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 16px;
+  margin-top: 14px;
+}
+
+.diagnostics-grid dt {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.diagnostics-grid dd {
+  margin: 0;
+  font-size: 0.86rem;
+  word-break: break-word;
+}
+
+.diagnostics-grid pre {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.alert.warning,
+.subtle-warning {
+  background: #fff8e8;
+  border: 1px solid #f0d9a0;
+  color: #7a5b14;
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  font-size: 0.9rem;
+}

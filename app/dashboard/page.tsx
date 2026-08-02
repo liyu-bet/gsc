@@ -6,11 +6,18 @@ import {
   buildComparisonRange,
   enumerateDates,
   gscCalendarDate,
-  parseAllowedRange,
   type AllowedRangeDays,
 } from '@/lib/date-ranges';
 import { formatDecimal, formatNumber } from '@/lib/format';
 import { metricDelta, summarizeMetricRows } from '@/lib/metrics';
+import { parsePeriodParams, periodLabel } from '@/lib/periods';
+import {
+  buildLatestHourlyWindows,
+  hourlyFetchDateSpan,
+  normalizeHourlyRows,
+  summarizeHourWindow,
+} from '@/lib/hourly-ranges';
+import { buildHourlyTotalsRequest } from '@/lib/search-analytics-request';
 import { DashboardToolbar } from '@/components/DashboardToolbar';
 import { PortfolioCard } from '@/components/PortfolioCard';
 import { AppHeader } from '@/components/AppHeader';
@@ -36,6 +43,7 @@ type SiteCardData = {
   previousSeries: Record<MetricKey, number[]>;
   metrics: Record<MetricKey, { current: number; previous: number; delta: number; deltaPct: number }>;
   error: string | null;
+  rangeLabel: string;
 };
 
 const DEFAULT_METRICS: MetricKey[] = ['clicks', 'impressions', 'position'];
@@ -43,7 +51,7 @@ const VALID_METRICS = new Set<MetricKey>(DEFAULT_METRICS);
 const VALID_SEARCH_TYPES = new Set<SearchType>(['web', 'discover', 'news', 'image', 'video']);
 const VALID_SORTS = new Set(['az', 'total', 'growth', 'growthPct']);
 
-const getCachedSiteCardData = unstable_cache(
+const getCachedDailySiteCardData = unstable_cache(
   async (
     propertyId: string,
     connectionId: string,
@@ -83,9 +91,50 @@ const getCachedSiteCardData = unstable_cache(
       currentSeries: buildSeries(currentRows),
       previousSeries: buildSeries(previousRows),
       metrics: buildMetricSnapshots(currentRows, previousRows),
+      rangeLabel: `${range.startDate} → ${range.endDate}`,
     };
   },
-  ['dashboard-site-cards'],
+  ['dashboard-site-cards-daily'],
+  { revalidate: 300 }
+);
+
+const getCachedHourlySiteCardData = unstable_cache(
+  async (propertyId: string, connectionId: string, siteUrl: string, searchType: SearchType, dayKey: string) => {
+    const span = hourlyFetchDateSpan(new Date(`${dayKey}T12:00:00.000Z`), 72);
+    const body = buildHourlyTotalsRequest({
+      startDate: span.startDate,
+      endDate: span.endDate,
+      searchType,
+    });
+    const response = await querySite(connectionId, siteUrl, body);
+    const normalized = normalizeHourlyRows(response.rows || []);
+    const windows = buildLatestHourlyWindows(normalized, 24);
+    const currentTotals = summarizeHourWindow(windows.current);
+    const previousTotals = summarizeHourWindow(windows.previous);
+
+    return {
+      currentSeries: {
+        clicks: windows.current.rows.map((row) => row.clicks),
+        impressions: windows.current.rows.map((row) => row.impressions),
+        position: windows.current.rows.map((row) => row.position ?? 0),
+      },
+      previousSeries: {
+        clicks: windows.previous.rows.map((row) => row.clicks),
+        impressions: windows.previous.rows.map((row) => row.impressions),
+        position: windows.previous.rows.map((row) => row.position ?? 0),
+      },
+      metrics: {
+        clicks: metricDelta(currentTotals.clicks, previousTotals.clicks),
+        impressions: metricDelta(currentTotals.impressions, previousTotals.impressions),
+        position: metricDelta(currentTotals.position, previousTotals.position),
+      },
+      rangeLabel:
+        windows.current.start && windows.current.end
+          ? `${windows.current.start} → ${windows.current.end}`
+          : '24 часа',
+    };
+  },
+  ['dashboard-site-cards-hourly'],
   { revalidate: 300 }
 );
 
@@ -97,6 +146,7 @@ export default async function DashboardPage({
     q?: string;
     sort?: string;
     range?: string;
+    period?: string;
     metrics?: string;
     searchType?: string;
     compare?: string;
@@ -108,13 +158,16 @@ export default async function DashboardPage({
   const params = (await searchParams) || {};
   const search = (params.q || '').trim().toLowerCase();
   const sort = VALID_SORTS.has(params.sort || '') ? (params.sort as 'az' | 'total' | 'growth' | 'growthPct') : 'total';
-  const rangeDays = parseAllowedRange(params.range, 90);
+  const period = parsePeriodParams({ period: params.period, range: params.range });
   const searchType = VALID_SEARCH_TYPES.has((params.searchType || 'web') as SearchType)
     ? ((params.searchType || 'web') as SearchType)
     : 'web';
-  const compare = params.compare !== '0';
+  const compare =
+    params.compare === '1' ? true : params.compare === '0' ? false : period.compareDefault;
   const visibleMetrics = parseVisibleMetrics(params.metrics);
   const endDate = gscCalendarDate();
+  const rangeDays: AllowedRangeDays = period.mode === 'daily' ? period.days : 28;
+  const dailyRange = buildComparisonRange(rangeDays, endDate);
 
   const connections = await prisma.googleConnection.findMany({
     include: {
@@ -146,12 +199,21 @@ export default async function DashboardPage({
     );
   });
 
-  const range = buildComparisonRange(rangeDays, endDate);
-
   const siteCards = await Promise.all(
     filteredProperties.map(async (property): Promise<SiteCardData> => {
       try {
-        const data = await getCachedSiteCardData(
+        if (period.mode === 'hourly') {
+          const data = await getCachedHourlySiteCardData(
+            property.id,
+            property.connectionId,
+            property.siteUrl,
+            searchType,
+            endDate
+          );
+          return { ...property, ...data, error: null };
+        }
+
+        const data = await getCachedDailySiteCardData(
           property.id,
           property.connectionId,
           property.siteUrl,
@@ -159,31 +221,30 @@ export default async function DashboardPage({
           searchType,
           endDate
         );
-
-        return {
-          ...property,
-          currentSeries: data.currentSeries,
-          previousSeries: data.previousSeries,
-          metrics: data.metrics,
-          error: null,
-        };
+        return { ...property, ...data, error: null };
       } catch (error) {
-        const alignedDatesCurrent = enumerateDates(range.startDate, range.endDate);
-        const alignedDatesPrevious = enumerateDates(range.previousStartDate, range.previousEndDate);
+        const length = period.mode === 'hourly' ? 24 : enumerateDates(dailyRange.startDate, dailyRange.endDate).length;
         return {
           ...property,
-          currentSeries: emptySeries(alignedDatesCurrent.length),
-          previousSeries: emptySeries(alignedDatesPrevious.length),
+          currentSeries: emptySeries(length),
+          previousSeries: emptySeries(length),
           metrics: emptyMetrics(),
+          rangeLabel: period.mode === 'hourly' ? '24 часа' : `${dailyRange.startDate} → ${dailyRange.endDate}`,
           error: error instanceof Error ? error.message : 'Неизвестная ошибка API',
         };
       }
     })
   );
 
-  const sortedSites = [...siteCards].sort((left, right) => compareSites(left, right, sort, visibleMetrics[0] || 'clicks'));
+  const sortedSites = [...siteCards].sort((left, right) =>
+    compareSites(left, right, sort, visibleMetrics[0] || 'clicks')
+  );
 
   const portfolioSummary = buildPortfolioSummary(siteCards);
+  const summaryRangeLabel =
+    period.mode === 'hourly'
+      ? periodLabel('24h')
+      : `${dailyRange.startDate} → ${dailyRange.endDate}`;
 
   return (
     <main className="page-shell seo-shell">
@@ -202,7 +263,7 @@ export default async function DashboardPage({
       <DashboardToolbar
         compare={compare}
         endDate={endDate}
-        range={rangeDays}
+        periodId={period.id}
         search={search}
         searchType={searchType}
         sort={sort}
@@ -212,24 +273,37 @@ export default async function DashboardPage({
       <section className="portfolio-summary-strip panel panel-compact">
         <div>
           <strong>{formatNumber(portfolioSummary.clicks.current)}</strong>
-          <span className={portfolioSummary.clicks.deltaPct >= 0 ? 'good' : 'bad'}>
-            {formatSignedPercent(portfolioSummary.clicks.deltaPct)} кликов
-          </span>
+          {compare ? (
+            <span className={portfolioSummary.clicks.deltaPct >= 0 ? 'good' : 'bad'}>
+              {formatSignedPercent(portfolioSummary.clicks.deltaPct)} кликов
+            </span>
+          ) : (
+            <span className="muted">кликов</span>
+          )}
         </div>
         <div>
           <strong>{compactNumber(portfolioSummary.impressions.current)}</strong>
-          <span className={portfolioSummary.impressions.deltaPct >= 0 ? 'good' : 'bad'}>
-            {formatSignedPercent(portfolioSummary.impressions.deltaPct)} показов
-          </span>
+          {compare ? (
+            <span className={portfolioSummary.impressions.deltaPct >= 0 ? 'good' : 'bad'}>
+              {formatSignedPercent(portfolioSummary.impressions.deltaPct)} показов
+            </span>
+          ) : (
+            <span className="muted">показов</span>
+          )}
         </div>
         <div>
           <strong>{formatDecimal(portfolioSummary.position.current, 1)}</strong>
-          <span className={portfolioSummary.position.delta <= 0 ? 'good' : 'bad'}>
-            {formatSignedDecimal(portfolioSummary.position.previous - portfolioSummary.position.current, 1)} позиции
-          </span>
+          {compare ? (
+            <span className={portfolioSummary.position.delta <= 0 ? 'good' : 'bad'}>
+              {formatSignedDecimal(portfolioSummary.position.previous - portfolioSummary.position.current, 1)} позиции
+            </span>
+          ) : (
+            <span className="muted">ср. позиция</span>
+          )}
         </div>
         <div className="small-text">
-          {range.startDate} → {range.endDate} · Последняя доступная дата: {endDate}
+          {summaryRangeLabel}
+          {period.mode !== 'hourly' ? ` · Последняя доступная дата: ${endDate}` : ''}
         </div>
       </section>
 
@@ -253,7 +327,7 @@ export default async function DashboardPage({
               label={site.label}
               metrics={site.metrics}
               previousSeries={site.previousSeries}
-              rangeLabel={`${range.startDate} → ${range.endDate}`}
+              rangeLabel={site.rangeLabel}
               siteUrl={site.siteUrl}
               visibleMetrics={visibleMetrics}
             />
@@ -279,7 +353,10 @@ export default async function DashboardPage({
                   <div className="muted small-text">{property.siteUrl}</div>
                 </div>
                 <div className="property-actions">
-                  <a className="button ghost small" href={`/sites/${property.id}`}>
+                  <a
+                    className="button ghost small"
+                    href={`/sites/${property.id}?period=${period.mode === 'hourly' ? '24h' : period.id}&searchType=${searchType}`}
+                  >
                     Открыть
                   </a>
                 </div>
@@ -323,7 +400,10 @@ function buildSeries(rows: ReturnType<typeof alignDailyRows>): Record<MetricKey,
   };
 }
 
-function buildMetricSnapshots(currentRows: ReturnType<typeof alignDailyRows>, previousRows: ReturnType<typeof alignDailyRows>) {
+function buildMetricSnapshots(
+  currentRows: ReturnType<typeof alignDailyRows>,
+  previousRows: ReturnType<typeof alignDailyRows>
+) {
   const current = summarizeMetricRows(currentRows);
   const previous = summarizeMetricRows(previousRows);
 
@@ -351,7 +431,12 @@ function emptyMetrics() {
   };
 }
 
-function compareSites(left: SiteCardData, right: SiteCardData, sort: 'az' | 'total' | 'growth' | 'growthPct', primaryMetric: MetricKey) {
+function compareSites(
+  left: SiteCardData,
+  right: SiteCardData,
+  sort: 'az' | 'total' | 'growth' | 'growthPct',
+  primaryMetric: MetricKey
+) {
   if (sort === 'az') {
     return left.label.localeCompare(right.label);
   }
@@ -365,7 +450,7 @@ function compareSites(left: SiteCardData, right: SiteCardData, sort: 'az' | 'tot
 
   if (sort === 'growth') {
     if (primaryMetric === 'position') {
-      return (rightMetric.previous - rightMetric.current) - (leftMetric.previous - leftMetric.current);
+      return rightMetric.previous - rightMetric.current - (leftMetric.previous - leftMetric.current);
     }
     return rightMetric.delta - leftMetric.delta;
   }
@@ -389,8 +474,10 @@ function buildPortfolioSummary(sites: SiteCardData[]) {
       : 0;
   const weightedPositionPrevious =
     impressionsPrevious > 0
-      ? sites.reduce((acc, site) => acc + site.metrics.position.previous * site.metrics.impressions.previous, 0) /
-        impressionsPrevious
+      ? sites.reduce(
+          (acc, site) => acc + site.metrics.position.previous * site.metrics.impressions.previous,
+          0
+        ) / impressionsPrevious
       : 0;
 
   return {

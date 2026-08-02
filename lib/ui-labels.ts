@@ -11,12 +11,13 @@ export function searchTypeLabel(type: string) {
 }
 
 export function rangeLabel(days: number) {
-  if (days === 1) return '1 день';
+  // Legacy label: range=1 now means rolling 24h in the UI.
+  if (days === 1) return '24 часа';
   if (days === 7) return '7 дней';
   if (days === 14) return '14 дней';
   if (days === 28) return '28 дней';
-  if (days === 90) return '90 дней';
-  if (days === 180) return '180 дней';
+  if (days === 90) return '3 месяца';
+  if (days === 180) return '6 месяцев';
   if (days === 365) return '1 год';
   if (days === 730) return '2 года';
   if (days >= 365) {
