@@ -1,9 +1,16 @@
-import { addDays, differenceInCalendarDays, format, parseISO } from 'date-fns';
 import { unstable_cache } from 'next/cache';
 import { requireAdmin } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { defaultDateRange, latestAvailableDate, querySite } from '@/lib/google';
+import { querySite } from '@/lib/google';
+import {
+  buildComparisonRange,
+  enumerateDates,
+  gscCalendarDate,
+  parseAllowedRange,
+  type AllowedRangeDays,
+} from '@/lib/date-ranges';
 import { formatDecimal, formatNumber } from '@/lib/format';
+import { metricDelta, summarizeMetricRows } from '@/lib/metrics';
 import { DashboardToolbar } from '@/components/DashboardToolbar';
 import { PortfolioCard } from '@/components/PortfolioCard';
 import { AppHeader } from '@/components/AppHeader';
@@ -41,11 +48,11 @@ const getCachedSiteCardData = unstable_cache(
     propertyId: string,
     connectionId: string,
     siteUrl: string,
-    rangeDays: number,
+    rangeDays: AllowedRangeDays,
     searchType: SearchType,
     endDate: string
   ) => {
-    const range = defaultDateRange(rangeDays, endDate);
+    const range = buildComparisonRange(rangeDays, endDate);
     const alignedDatesCurrent = enumerateDates(range.startDate, range.endDate);
     const alignedDatesPrevious = enumerateDates(range.previousStartDate, range.previousEndDate);
 
@@ -101,13 +108,13 @@ export default async function DashboardPage({
   const params = (await searchParams) || {};
   const search = (params.q || '').trim().toLowerCase();
   const sort = VALID_SORTS.has(params.sort || '') ? (params.sort as 'az' | 'total' | 'growth' | 'growthPct') : 'total';
-  const rangeDays = clampRange(params.range);
+  const rangeDays = parseAllowedRange(params.range, 90);
   const searchType = VALID_SEARCH_TYPES.has((params.searchType || 'web') as SearchType)
     ? ((params.searchType || 'web') as SearchType)
     : 'web';
   const compare = params.compare !== '0';
   const visibleMetrics = parseVisibleMetrics(params.metrics);
-  const endDate = latestAvailableDate();
+  const endDate = gscCalendarDate();
 
   const connections = await prisma.googleConnection.findMany({
     include: {
@@ -139,7 +146,7 @@ export default async function DashboardPage({
     );
   });
 
-  const range = defaultDateRange(rangeDays, endDate);
+  const range = buildComparisonRange(rangeDays, endDate);
 
   const siteCards = await Promise.all(
     filteredProperties.map(async (property): Promise<SiteCardData> => {
@@ -285,24 +292,6 @@ export default async function DashboardPage({
   );
 }
 
-function clampRange(value?: string) {
-  const parsed = Number(value || '90');
-  if (!Number.isFinite(parsed)) return 90;
-  if (parsed <= 7) return 7;
-  if (parsed <= 14) return 14;
-  if (parsed <= 28) return 28;
-  if (parsed <= 90) return 90;
-  if (parsed <= 180) return 180;
-  if (parsed <= 365) return 365;
-  return 730;
-}
-
-function normalizeEndDate(value?: string) {
-  if (!value) return latestAvailableDate();
-  const date = parseISO(value);
-  return Number.isNaN(date.getTime()) ? latestAvailableDate() : format(date, 'yyyy-MM-dd');
-}
-
 function parseVisibleMetrics(value?: string): MetricKey[] {
   const parsed = (value || DEFAULT_METRICS.join(','))
     .split(',')
@@ -310,13 +299,6 @@ function parseVisibleMetrics(value?: string): MetricKey[] {
     .filter((item) => VALID_METRICS.has(item));
 
   return parsed.length ? parsed : DEFAULT_METRICS;
-}
-
-function enumerateDates(startDate: string, endDate: string): string[] {
-  const start = parseISO(startDate);
-  const end = parseISO(endDate);
-  const length = differenceInCalendarDays(end, start);
-  return Array.from({ length: length + 1 }, (_, index) => format(addDays(start, index), 'yyyy-MM-dd'));
 }
 
 function alignDailyRows(alignedDates: string[], rows: DailyRow[]) {
@@ -342,39 +324,14 @@ function buildSeries(rows: ReturnType<typeof alignDailyRows>): Record<MetricKey,
 }
 
 function buildMetricSnapshots(currentRows: ReturnType<typeof alignDailyRows>, previousRows: ReturnType<typeof alignDailyRows>) {
-  const current = summarizeRows(currentRows);
-  const previous = summarizeRows(previousRows);
+  const current = summarizeMetricRows(currentRows);
+  const previous = summarizeMetricRows(previousRows);
 
   return {
-    clicks: metricSnapshot(current.clicks, previous.clicks),
-    impressions: metricSnapshot(current.impressions, previous.impressions),
-    position: metricSnapshot(current.position, previous.position),
+    clicks: metricDelta(current.clicks, previous.clicks),
+    impressions: metricDelta(current.impressions, previous.impressions),
+    position: metricDelta(current.position, previous.position),
   } satisfies Record<MetricKey, { current: number; previous: number; delta: number; deltaPct: number }>;
-}
-
-function summarizeRows(rows: ReturnType<typeof alignDailyRows>) {
-  const clicks = rows.reduce((acc, row) => acc + row.clicks, 0);
-  const impressions = rows.reduce((acc, row) => acc + row.impressions, 0);
-  const weightedPosition = impressions > 0
-    ? rows.reduce((acc, row) => acc + row.position * row.impressions, 0) / impressions
-    : 0;
-
-  return {
-    clicks,
-    impressions,
-    position: weightedPosition,
-  };
-}
-
-function metricSnapshot(current: number, previous: number) {
-  const delta = current - previous;
-  const deltaPct = previous === 0 ? (current === 0 ? 0 : 100) : (delta / previous) * 100;
-  return {
-    current,
-    previous,
-    delta,
-    deltaPct,
-  };
 }
 
 function emptySeries(length: number): Record<MetricKey, number[]> {
@@ -388,9 +345,9 @@ function emptySeries(length: number): Record<MetricKey, number[]> {
 
 function emptyMetrics() {
   return {
-    clicks: metricSnapshot(0, 0),
-    impressions: metricSnapshot(0, 0),
-    position: metricSnapshot(0, 0),
+    clicks: metricDelta(0, 0),
+    impressions: metricDelta(0, 0),
+    position: metricDelta(0, 0),
   };
 }
 
@@ -425,17 +382,21 @@ function buildPortfolioSummary(sites: SiteCardData[]) {
   const clicksPrevious = sites.reduce((acc, site) => acc + site.metrics.clicks.previous, 0);
   const impressionsCurrent = sites.reduce((acc, site) => acc + site.metrics.impressions.current, 0);
   const impressionsPrevious = sites.reduce((acc, site) => acc + site.metrics.impressions.previous, 0);
-  const weightedPositionCurrent = impressionsCurrent > 0
-    ? sites.reduce((acc, site) => acc + site.metrics.position.current * site.metrics.impressions.current, 0) / impressionsCurrent
-    : 0;
-  const weightedPositionPrevious = impressionsPrevious > 0
-    ? sites.reduce((acc, site) => acc + site.metrics.position.previous * site.metrics.impressions.previous, 0) / impressionsPrevious
-    : 0;
+  const weightedPositionCurrent =
+    impressionsCurrent > 0
+      ? sites.reduce((acc, site) => acc + site.metrics.position.current * site.metrics.impressions.current, 0) /
+        impressionsCurrent
+      : 0;
+  const weightedPositionPrevious =
+    impressionsPrevious > 0
+      ? sites.reduce((acc, site) => acc + site.metrics.position.previous * site.metrics.impressions.previous, 0) /
+        impressionsPrevious
+      : 0;
 
   return {
-    clicks: metricSnapshot(clicksCurrent, clicksPrevious),
-    impressions: metricSnapshot(impressionsCurrent, impressionsPrevious),
-    position: metricSnapshot(weightedPositionCurrent, weightedPositionPrevious),
+    clicks: metricDelta(clicksCurrent, clicksPrevious),
+    impressions: metricDelta(impressionsCurrent, impressionsPrevious),
+    position: metricDelta(weightedPositionCurrent, weightedPositionPrevious),
   };
 }
 

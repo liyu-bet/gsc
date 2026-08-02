@@ -47,6 +47,8 @@ const GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo';
 const GSC_BASE = 'https://www.googleapis.com/webmasters/v3';
 
 export function latestAvailableDate(): string {
+  // Kept for LOW lifecycle lookback semantics (today-2 local lag).
+  // UI reports should use gscCalendarDate() from lib/date-ranges.ts instead.
   return format(subDays(new Date(), 2), 'yyyy-MM-dd');
 }
 
@@ -292,15 +294,19 @@ export function defaultDateRange(days = 28, endDateInput?: string): {
   previousStartDate: string;
   previousEndDate: string;
 } {
-  const requestedEnd = endDateInput ? parseISO(endDateInput) : null;
-  const end = requestedEnd && isValid(requestedEnd) ? requestedEnd : parseISO(latestAvailableDate());
-  const start = subDays(end, days - 1);
+  // Compatibility helper for non-UI callers. Prefer buildComparisonRange() for UI ranges.
+  const endDate = endDateInput && /^\d{4}-\d{2}-\d{2}$/.test(endDateInput)
+    ? endDateInput
+    : latestAvailableDate();
+  const end = parseISO(endDate);
+  const safeEnd = isValid(end) ? end : parseISO(latestAvailableDate());
+  const start = subDays(safeEnd, Math.max(1, days) - 1);
   const previousEnd = subDays(start, 1);
-  const previousStart = subDays(previousEnd, days - 1);
+  const previousStart = subDays(previousEnd, Math.max(1, days) - 1);
 
   return {
     startDate: format(start, 'yyyy-MM-dd'),
-    endDate: format(end, 'yyyy-MM-dd'),
+    endDate: format(safeEnd, 'yyyy-MM-dd'),
     previousStartDate: format(previousStart, 'yyyy-MM-dd'),
     previousEndDate: format(previousEnd, 'yyyy-MM-dd'),
   };

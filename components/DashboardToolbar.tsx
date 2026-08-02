@@ -4,6 +4,7 @@ import { useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { rangeLabel, searchTypeLabel } from '@/lib/ui-labels';
+import { ALLOWED_RANGE_DAYS } from '@/lib/date-ranges';
 
 const METRIC_OPTIONS = [
   { key: 'clicks', label: 'Клики', icon: '✦' },
@@ -26,16 +27,10 @@ const SEARCH_TYPES = [
   { key: 'video', label: searchTypeLabel('video') },
 ] as const;
 
-const RANGE_OPTIONS = [
-  { key: '1', days: 1 },
-  { key: '7', days: 7 },
-  { key: '14', days: 14 },
-  { key: '28', days: 28 },
-  { key: '90', days: 90 },
-  { key: '180', days: 180 },
-  { key: '365', days: 365 },
-  { key: '730', days: 730 },
-] as const;
+const RANGE_OPTIONS = ALLOWED_RANGE_DAYS.map((days) => ({
+  key: String(days),
+  days,
+}));
 
 const STORAGE_KEY = 'gsk-dashboard-preferences';
 const GLOBAL_STORAGE_KEY = 'gsk-global-preferences';

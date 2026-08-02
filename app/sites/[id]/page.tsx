@@ -1,12 +1,30 @@
 import Link from 'next/link';
-import { addDays, differenceInCalendarDays, format, isValid, parseISO, subDays } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { notFound } from 'next/navigation';
 import { requireAdmin } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { defaultDateRange, latestAvailableDate, querySite, SearchAnalyticsRow } from '@/lib/google';
+import { querySite, SearchAnalyticsRow } from '@/lib/google';
 import { countryName } from '@/lib/countries';
+import {
+  buildComparisonRange,
+  buildCustomComparisonRange,
+  enumerateDates,
+  gscCalendarDate,
+  normalizeGscDate,
+  parseAllowedRange,
+  type AllowedRangeDays,
+  type ComparisonDateRange,
+} from '@/lib/date-ranges';
 import { formatDecimal, formatNumber } from '@/lib/format';
+import {
+  countDeltaClass,
+  formatCountDelta,
+  metricDelta,
+  positionImprovement,
+  summarizeMetricRows,
+  weightedAveragePosition,
+} from '@/lib/metrics';
 import { deviceLabel } from '@/lib/ui-labels';
 import { SiteTrendChart } from '@/components/site/SiteTrendChart';
 import { WorkspaceTable } from '@/components/site/WorkspaceTable';
@@ -61,7 +79,6 @@ type SiteSearchParams = {
   device?: string;
 };
 
-const RANGE_OPTIONS = new Set([1, 7, 14, 28, 90, 180, 365, 730]);
 const SEARCH_TYPES = new Set(['web', 'discover', 'news', 'image', 'video']);
 
 async function safeQuery(
@@ -123,17 +140,6 @@ function trendClass(value: number) {
   return value >= 0 ? 'good' : 'bad';
 }
 
-function formatTrend(value: number, digits = 1) {
-  const sign = value > 0 ? '+' : '';
-  return `${sign}${formatDecimal(value, digits)}%`;
-}
-
-function formatPositionShift(current: number, previous: number) {
-  const shift = previous - current;
-  const sign = shift > 0 ? '+' : '';
-  return `${sign}${formatDecimal(shift, 1)}`;
-}
-
 function buildMetricSeries(dailyCurrent: AlignedDailyRow[], dailyPrevious: AlignedDailyRow[]): DailyMetric[] {
   const currentClicks = dailyCurrent.map((row) => row.clicks);
   const previousClicks = dailyPrevious.map((row) => row.clicks);
@@ -142,12 +148,13 @@ function buildMetricSeries(dailyCurrent: AlignedDailyRow[], dailyPrevious: Align
   const currentPosition = dailyCurrent.map((row) => row.position);
   const previousPosition = dailyPrevious.map((row) => row.position);
 
-  const totalClicks = currentClicks.reduce((a, b) => a + b, 0);
-  const prevClicks = previousClicks.reduce((a, b) => a + b, 0);
-  const totalImpressions = currentImpressions.reduce((a, b) => a + b, 0);
-  const prevImpressions = previousImpressions.reduce((a, b) => a + b, 0);
-  const avgPosition = currentPosition.length ? currentPosition.reduce((a, b) => a + b, 0) / currentPosition.length : 0;
-  const prevPosition = previousPosition.length ? previousPosition.reduce((a, b) => a + b, 0) / previousPosition.length : 0;
+  const currentTotals = summarizeMetricRows(dailyCurrent);
+  const previousTotals = summarizeMetricRows(dailyPrevious);
+  const clicksDelta = metricDelta(currentTotals.clicks, previousTotals.clicks);
+  const impressionsDelta = metricDelta(currentTotals.impressions, previousTotals.impressions);
+  const avgPosition = weightedAveragePosition(dailyCurrent);
+  const prevPosition = weightedAveragePosition(dailyPrevious);
+  const positionShift = positionImprovement(avgPosition, prevPosition);
 
   return [
     {
@@ -155,20 +162,20 @@ function buildMetricSeries(dailyCurrent: AlignedDailyRow[], dailyPrevious: Align
       color: '#2563eb',
       current: currentClicks,
       previous: previousClicks,
-      currentText: formatNumber(totalClicks),
-      previousText: formatNumber(prevClicks),
-      changeText: formatTrend(deltaPercent(totalClicks, prevClicks)),
-      changeClass: trendClass(deltaPercent(totalClicks, prevClicks)),
+      currentText: formatNumber(currentTotals.clicks),
+      previousText: formatNumber(previousTotals.clicks),
+      changeText: formatTrend(clicksDelta.deltaPct),
+      changeClass: trendClass(clicksDelta.deltaPct),
     },
     {
       label: 'Показы',
       color: '#7c3aed',
       current: currentImpressions,
       previous: previousImpressions,
-      currentText: formatNumber(totalImpressions),
-      previousText: formatNumber(prevImpressions),
-      changeText: formatTrend(deltaPercent(totalImpressions, prevImpressions)),
-      changeClass: trendClass(deltaPercent(totalImpressions, prevImpressions)),
+      currentText: formatNumber(currentTotals.impressions),
+      previousText: formatNumber(previousTotals.impressions),
+      changeText: formatTrend(impressionsDelta.deltaPct),
+      changeClass: trendClass(impressionsDelta.deltaPct),
     },
     {
       label: 'Позиция',
@@ -178,34 +185,24 @@ function buildMetricSeries(dailyCurrent: AlignedDailyRow[], dailyPrevious: Align
       currentText: formatDecimal(avgPosition, 1),
       previousText: formatDecimal(prevPosition, 1),
       changeText: formatPositionShift(avgPosition, prevPosition),
-      changeClass: trendClass(prevPosition - avgPosition),
+      changeClass: trendClass(positionShift),
     },
   ];
 }
 
-function deltaPercent(current: number, previous: number) {
-  if (!previous && !current) return 0;
-  if (!previous && current > 0) return 100;
-  return ((current - previous) / previous) * 100;
+function formatTrend(value: number, digits = 1) {
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${formatDecimal(value, digits)}%`;
 }
 
-function clampRange(raw: string | undefined) {
-  const parsed = Number(raw || 90);
-  return RANGE_OPTIONS.has(parsed) ? parsed : 90;
+function formatPositionShift(current: number, previous: number) {
+  const shift = positionImprovement(current, previous);
+  const sign = shift > 0 ? '+' : '';
+  return `${sign}${formatDecimal(shift, 1)}`;
 }
 
 function normalizeSearchType(raw: string | undefined) {
   return SEARCH_TYPES.has(raw || 'web') ? (raw as string) : 'web';
-}
-
-function normalizeDate(raw: string | undefined, fallback: string) {
-  if (!raw) return fallback;
-  try {
-    const parsed = parseISO(raw);
-    return isValid(parsed) ? format(parsed, 'yyyy-MM-dd') : fallback;
-  } catch {
-    return fallback;
-  }
 }
 
 function formatLabel(date: string) {
@@ -247,29 +244,21 @@ function queryBase(searchType: string) {
   };
 }
 
-function buildDateRange(days: number, endDate: string, startDate?: string) {
+function buildDateRange(
+  days: AllowedRangeDays,
+  endDate: string,
+  startDate?: string
+): ComparisonDateRange & { custom: boolean } {
   if (!startDate) {
-    return { ...defaultDateRange(days, endDate), custom: false };
+    return { ...buildComparisonRange(days, endDate), custom: false };
   }
 
-  const start = parseISO(startDate);
-  const end = parseISO(endDate);
-
-  if (!isValid(start) || !isValid(end) || start > end) {
-    return { ...defaultDateRange(days, endDate), custom: false };
+  const custom = buildCustomComparisonRange(startDate, endDate);
+  if (!custom) {
+    return { ...buildComparisonRange(days, endDate), custom: false };
   }
 
-  const span = differenceInCalendarDays(end, start) + 1;
-  const previousEnd = subDays(start, 1);
-  const previousStart = subDays(previousEnd, span - 1);
-
-  return {
-    startDate: format(start, 'yyyy-MM-dd'),
-    endDate: format(end, 'yyyy-MM-dd'),
-    previousStartDate: format(previousStart, 'yyyy-MM-dd'),
-    previousEndDate: format(previousEnd, 'yyyy-MM-dd'),
-    custom: true,
-  };
+  return { ...custom, custom: true };
 }
 
 function buildFilterGroups(filters: ActiveFilters) {
@@ -309,13 +298,6 @@ type AlignedDailyRow = {
   position: number;
 };
 
-function enumerateDates(startDate: string, endDate: string): string[] {
-  const start = parseISO(startDate);
-  const end = parseISO(endDate);
-  const length = differenceInCalendarDays(end, start);
-  return Array.from({ length: length + 1 }, (_, index) => format(addDays(start, index), 'yyyy-MM-dd'));
-}
-
 function alignDailyRows(alignedDates: string[], rows: SearchAnalyticsRow[]): AlignedDailyRow[] {
   const byDate = new Map(rows.map((row) => [row.keys?.[0] || '', row]));
   return alignedDates.map((date) => {
@@ -340,10 +322,10 @@ export default async function SiteDetailPage({
   const { id } = await params;
   const incoming = (await searchParams) || {};
 
-  const rangeDays = clampRange(incoming.range);
+  const rangeDays = parseAllowedRange(incoming.range, 90);
   const searchType = normalizeSearchType(incoming.searchType);
-  const endDate = normalizeDate(incoming.endDate, latestAvailableDate());
-  const startDate = incoming.startDate ? normalizeDate(incoming.startDate, endDate) : undefined;
+  const endDate = normalizeGscDate(incoming.endDate, gscCalendarDate());
+  const startDate = incoming.startDate ? normalizeGscDate(incoming.startDate, endDate) : undefined;
   const activeFilters: ActiveFilters = {
     query: incoming.query,
     page: incoming.page,
@@ -443,24 +425,31 @@ export default async function SiteDetailPage({
   const previousLabels = alignedDailyPrevious.map((row) => formatLabel(row.date));
   const bucketSeries = buildBucketSeries(queryCountDaily.rows, alignedCurrentDates);
 
+  const currentQueryCount = queriesCurrent.rows.length;
+  const previousQueryCount = queriesPrevious.rows.length;
+  const currentPageCount = pagesCurrent.rows.length;
+  const previousPageCount = pagesPrevious.rows.length;
+  const queryCountDelta = currentQueryCount - previousQueryCount;
+  const pageCountDelta = currentPageCount - previousPageCount;
+
   const overviewCards = [
     {
       label: 'Запросы в выдаче',
-      current: formatNumber(queryRows.length),
-      change: formatTrend(deltaPercent(sum(queryRows, (row) => row.clicks), sum(queryRows, (row) => row.previousClicks))),
-      changeClass: trendClass(deltaPercent(sum(queryRows, (row) => row.clicks), sum(queryRows, (row) => row.previousClicks))),
+      current: formatNumber(currentQueryCount),
+      change: formatCountDelta(queryCountDelta, 'query', 'queries'),
+      changeClass: countDeltaClass(queryCountDelta),
     },
     {
       label: 'Страницы в выдаче',
-      current: formatNumber(pageRows.length),
-      change: formatTrend(deltaPercent(sum(pageRows, (row) => row.clicks), sum(pageRows, (row) => row.previousClicks))),
-      changeClass: trendClass(deltaPercent(sum(pageRows, (row) => row.clicks), sum(pageRows, (row) => row.previousClicks))),
+      current: formatNumber(currentPageCount),
+      change: formatCountDelta(pageCountDelta, 'page', 'pages'),
+      changeClass: countDeltaClass(pageCountDelta),
     },
     {
       label: 'Страны',
       current: formatNumber(countryRows.length),
-      change: formatTrend(deltaPercent(sum(countryRows, (row) => row.clicks), sum(countryRows, (row) => row.previousClicks))),
-      changeClass: trendClass(deltaPercent(sum(countryRows, (row) => row.clicks), sum(countryRows, (row) => row.previousClicks))),
+      change: formatTrend(metricDelta(sum(countryRows, (row) => row.clicks), sum(countryRows, (row) => row.previousClicks)).deltaPct),
+      changeClass: trendClass(metricDelta(sum(countryRows, (row) => row.clicks), sum(countryRows, (row) => row.previousClicks)).deltaPct),
     },
     {
       label: 'Устройства',
@@ -510,7 +499,7 @@ export default async function SiteDetailPage({
             <p className="muted">{property.siteUrl}</p>
             <p className="muted">Подключённый аккаунт Google: {property.connection.email}</p>
             <p className="muted">
-              Текущий период: {range.startDate} → {range.endDate} · Последняя доступная дата: {latestAvailableDate()}
+              Текущий период: {range.startDate} → {range.endDate} · Последняя доступная дата: {gscCalendarDate()}
             </p>
           </div>
           <div className="header-actions">
@@ -537,7 +526,7 @@ export default async function SiteDetailPage({
           currentSearchType={searchType}
           currentEndDate={endDate}
           currentStartDate={startDate}
-          latestDate={latestAvailableDate()}
+          latestDate={gscCalendarDate()}
           isCustom={range.custom}
         />
       </section>

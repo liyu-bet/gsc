@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { rangeLabel, searchTypeLabel } from '@/lib/ui-labels';
+import { ALLOWED_RANGE_DAYS } from '@/lib/date-ranges';
 
-const RANGE_OPTIONS = [1, 7, 14, 28, 90, 180, 365, 730];
+const RANGE_OPTIONS = [...ALLOWED_RANGE_DAYS];
 const SEARCH_TYPES = ['web', 'discover', 'news', 'image', 'video'] as const;
 const STORAGE_KEY = 'gsk-site-workspace-preferences';
 const GLOBAL_STORAGE_KEY = 'gsk-global-preferences';
