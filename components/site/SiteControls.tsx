@@ -3,7 +3,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { searchTypeLabel } from '@/lib/ui-labels';
-import { PERIOD_PRESETS, periodToQueryParams, type PeriodId } from '@/lib/periods';
+import {
+  PERIOD_PRESETS,
+  buildCustomApplyParams,
+  canApplyCustomPeriod,
+  customPeriodValidationError,
+  periodToQueryParams,
+  shouldUpdateUrlOnCustomOpen,
+  type PeriodId,
+} from '@/lib/periods';
 
 const SEARCH_TYPES = ['web', 'discover', 'news', 'image', 'video'] as const;
 const STORAGE_KEY = 'gsk-site-workspace-preferences';
@@ -29,8 +37,6 @@ export function SiteControls({
   currentEndDate,
   compare,
   isCustom,
-  rangeSummary,
-  freshnessSummary,
   clearFiltersHref,
 }: {
   currentPeriodId: string;
@@ -39,8 +45,6 @@ export function SiteControls({
   currentEndDate?: string;
   compare: boolean;
   isCustom: boolean;
-  rangeSummary?: string | null;
-  freshnessSummary?: string | null;
   clearFiltersHref: string;
 }) {
   const router = useRouter();
@@ -76,7 +80,6 @@ export function SiteControls({
       })
     );
 
-    // One-time cleanup of legacy date keys from older builds.
     try {
       const legacy = window.localStorage.getItem(STORAGE_KEY);
       if (legacy) {
@@ -94,7 +97,6 @@ export function SiteControls({
     const params = new URLSearchParams(queryString);
     let changed = false;
 
-    // Normalize legacy range=1 → period=24h and strip restored custom dates when a preset is active.
     if (!params.get('period') && params.get('range') === '1') {
       params.set('period', '24h');
       params.delete('range');
@@ -112,7 +114,6 @@ export function SiteControls({
         >;
         for (const key of ['period', 'searchType', 'compare'] as const) {
           if (!params.get(key) && stored[key]) {
-            // Never restore dates. Never restore period over an explicit range except via normalize above.
             if (key === 'period' && params.get('range')) continue;
             params.set(key, stored[key]);
             changed = true;
@@ -152,45 +153,37 @@ export function SiteControls({
     router.push(`${pathname}?${params.toString()}`);
   }
 
-  function selectPeriod(periodId: PeriodId) {
-    if (periodId === 'custom') {
-      setCustomOpen(true);
-      updateParams({
-        period: 'custom',
-        range: undefined,
-        startDate: draftStart || currentStartDate || undefined,
-        endDate: draftEnd || currentEndDate || undefined,
-      });
-      return;
-    }
-
+  function selectPreset(periodId: Exclude<PeriodId, 'custom'>) {
     setCustomOpen(false);
     setLastPreset(periodId);
     const resolved =
       periodId === '24h'
         ? ({ id: '24h', mode: 'hourly', compareDefault: false } as const)
         : ({ id: periodId, mode: 'daily', days: 28, compareDefault: true } as const);
-    updateParams({
-      ...periodToQueryParams(resolved),
-      // Keep compare as-is unless switching to 24h with no explicit compare — leave URL compare untouched.
-    });
+    updateParams(periodToQueryParams(resolved));
+  }
+
+  function openCustomPanel() {
+    setCustomOpen(true);
+    // Opening the form must not change the URL until Apply.
+    if (shouldUpdateUrlOnCustomOpen()) {
+      updateParams({ period: 'custom' });
+    }
   }
 
   function applyCustom() {
-    if (!draftStart || !draftEnd) return;
-    updateParams({
-      period: 'custom',
-      range: undefined,
-      startDate: draftStart,
-      endDate: draftEnd,
-    });
+    if (!canApplyCustomPeriod(draftStart, draftEnd)) return;
+    updateParams(buildCustomApplyParams(draftStart, draftEnd));
   }
 
   function cancelCustom() {
     setCustomOpen(false);
-    const fallback = (lastPreset === 'custom' ? '28d' : lastPreset) as PeriodId;
-    selectPeriod(fallback === 'custom' ? '28d' : fallback);
+    const fallback = (lastPreset === 'custom' ? '28d' : lastPreset) as Exclude<PeriodId, 'custom'>;
+    selectPreset(fallback);
   }
+
+  const validationError = customPeriodValidationError(draftStart, draftEnd);
+  const applyEnabled = canApplyCustomPeriod(draftStart, draftEnd);
 
   return (
     <div className="site-controls-wrap">
@@ -203,7 +196,10 @@ export function SiteControls({
                 key={chip.id}
                 type="button"
                 className={`period-chip ${active ? 'active' : ''}`}
-                onClick={() => selectPeriod(chip.id)}
+                onClick={() => {
+                  if (chip.id === 'custom') openCustomPanel();
+                  else selectPreset(chip.id);
+                }}
               >
                 {chip.label}
               </button>
@@ -266,7 +262,7 @@ export function SiteControls({
           <div className="site-control-group">
             <label>&nbsp;</label>
             <div className="site-control-actions">
-              <button type="button" className="button small" onClick={applyCustom} disabled={!draftStart || !draftEnd}>
+              <button type="button" className="button small" onClick={applyCustom} disabled={!applyEnabled}>
                 Применить
               </button>
               <button type="button" className="button ghost small" onClick={cancelCustom}>
@@ -274,13 +270,7 @@ export function SiteControls({
               </button>
             </div>
           </div>
-        </div>
-      ) : null}
-
-      {rangeSummary ? (
-        <div className="period-range-summary">
-          <div>{rangeSummary}</div>
-          {freshnessSummary ? <div className="muted">{freshnessSummary}</div> : null}
+          {validationError ? <div className="period-validation-error">{validationError}</div> : null}
         </div>
       ) : null}
     </div>

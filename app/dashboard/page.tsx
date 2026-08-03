@@ -10,12 +10,15 @@ import {
 } from '@/lib/date-ranges';
 import { formatDecimal, formatNumber } from '@/lib/format';
 import { metricDelta, summarizeMetricRows } from '@/lib/metrics';
-import { parsePeriodParams, periodLabel } from '@/lib/periods';
+import { parsePeriodParams } from '@/lib/periods';
 import {
-  buildLatestHourlyWindows,
+  buildHourlyWindowsAtAnchor,
+  chooseCommonHourlyAnchor,
+  findLatestAvailableHour,
   hourlyFetchDateSpan,
   normalizeHourlyRows,
   summarizeHourWindow,
+  type HourlyMetricRow,
 } from '@/lib/hourly-ranges';
 import { buildHourlyTotalsRequest } from '@/lib/search-analytics-request';
 import { DashboardToolbar } from '@/components/DashboardToolbar';
@@ -44,6 +47,11 @@ type SiteCardData = {
   metrics: Record<MetricKey, { current: number; previous: number; delta: number; deltaPct: number }>;
   error: string | null;
   rangeLabel: string;
+};
+
+type HourlySiteCache = {
+  rows: HourlyMetricRow[];
+  latestAvailableHour: string | null;
 };
 
 const DEFAULT_METRICS: MetricKey[] = ['clicks', 'impressions', 'position'];
@@ -98,8 +106,15 @@ const getCachedDailySiteCardData = unstable_cache(
   { revalidate: 300 }
 );
 
-const getCachedHourlySiteCardData = unstable_cache(
-  async (propertyId: string, connectionId: string, siteUrl: string, searchType: SearchType, dayKey: string) => {
+/** Cache raw hourly rows only — windows are built later at a shared portfolio anchor. */
+const getCachedHourlyRows = unstable_cache(
+  async (
+    propertyId: string,
+    connectionId: string,
+    siteUrl: string,
+    searchType: SearchType,
+    dayKey: string
+  ): Promise<HourlySiteCache> => {
     const span = hourlyFetchDateSpan(new Date(`${dayKey}T12:00:00.000Z`), 72);
     const body = buildHourlyTotalsRequest({
       startDate: span.startDate,
@@ -107,34 +122,13 @@ const getCachedHourlySiteCardData = unstable_cache(
       searchType,
     });
     const response = await querySite(connectionId, siteUrl, body);
-    const normalized = normalizeHourlyRows(response.rows || []);
-    const windows = buildLatestHourlyWindows(normalized, 24);
-    const currentTotals = summarizeHourWindow(windows.current);
-    const previousTotals = summarizeHourWindow(windows.previous);
-
+    const rows = normalizeHourlyRows(response.rows || []);
     return {
-      currentSeries: {
-        clicks: windows.current.rows.map((row) => row.clicks),
-        impressions: windows.current.rows.map((row) => row.impressions),
-        position: windows.current.rows.map((row) => row.position ?? 0),
-      },
-      previousSeries: {
-        clicks: windows.previous.rows.map((row) => row.clicks),
-        impressions: windows.previous.rows.map((row) => row.impressions),
-        position: windows.previous.rows.map((row) => row.position ?? 0),
-      },
-      metrics: {
-        clicks: metricDelta(currentTotals.clicks, previousTotals.clicks),
-        impressions: metricDelta(currentTotals.impressions, previousTotals.impressions),
-        position: metricDelta(currentTotals.position, previousTotals.position),
-      },
-      rangeLabel:
-        windows.current.start && windows.current.end
-          ? `${windows.current.start} → ${windows.current.end}`
-          : '24 часа',
+      rows,
+      latestAvailableHour: findLatestAvailableHour(rows),
     };
   },
-  ['dashboard-site-cards-hourly'],
+  ['dashboard-site-cards-hourly-rows'],
   { revalidate: 300 }
 );
 
@@ -199,52 +193,141 @@ export default async function DashboardPage({
     );
   });
 
-  const siteCards = await Promise.all(
-    filteredProperties.map(async (property): Promise<SiteCardData> => {
-      try {
-        if (period.mode === 'hourly') {
-          const data = await getCachedHourlySiteCardData(
+  let siteCards: SiteCardData[] = [];
+  let summaryRangeLabel =
+    period.mode === 'hourly' ? '24 часа' : `${dailyRange.startDate} → ${dailyRange.endDate}`;
+  let hourlyEmptyMessage: string | null = null;
+
+  if (period.mode === 'hourly') {
+    const hourlyLoads = await Promise.all(
+      filteredProperties.map(async (property) => {
+        try {
+          const data = await getCachedHourlyRows(
             property.id,
             property.connectionId,
             property.siteUrl,
             searchType,
             endDate
           );
-          return { ...property, ...data, error: null };
+          if (!data.latestAvailableHour || !data.rows.length) {
+            return {
+              property,
+              rows: [] as HourlyMetricRow[],
+              latestAvailableHour: null as string | null,
+              error: 'Нет почасовых данных Search Analytics для этого ресурса',
+            };
+          }
+          return {
+            property,
+            rows: data.rows,
+            latestAvailableHour: data.latestAvailableHour,
+            error: null as string | null,
+          };
+        } catch (error) {
+          return {
+            property,
+            rows: [] as HourlyMetricRow[],
+            latestAvailableHour: null as string | null,
+            error: error instanceof Error ? error.message : 'Неизвестная ошибка API',
+          };
+        }
+      })
+    );
+
+    const commonAnchor = chooseCommonHourlyAnchor(
+      hourlyLoads.filter((item) => !item.error).map((item) => item.latestAvailableHour)
+    );
+
+    if (!commonAnchor) {
+      hourlyEmptyMessage =
+        filteredProperties.length === 0
+          ? null
+          : 'Нет почасовых данных ни по одному выбранному ресурсу за последние 24 часа.';
+      siteCards = hourlyLoads.map((item) => ({
+        ...item.property,
+        currentSeries: emptySeries(24),
+        previousSeries: emptySeries(24),
+        metrics: emptyMetrics(),
+        rangeLabel: '24 часа',
+        error: item.error || 'Нет почасовых данных',
+      }));
+    } else {
+      const windowsAtAnchor = buildHourlyWindowsAtAnchor([], commonAnchor, 24);
+      summaryRangeLabel =
+        windowsAtAnchor.current.start && windowsAtAnchor.current.end
+          ? `${windowsAtAnchor.current.start} → ${windowsAtAnchor.current.end}`
+          : commonAnchor;
+
+      siteCards = hourlyLoads.map((item) => {
+        if (item.error || !item.latestAvailableHour) {
+          return {
+            ...item.property,
+            currentSeries: emptySeries(24),
+            previousSeries: emptySeries(24),
+            metrics: emptyMetrics(),
+            rangeLabel: summaryRangeLabel,
+            error: item.error || 'Нет почасовых данных',
+          };
         }
 
-        const data = await getCachedDailySiteCardData(
-          property.id,
-          property.connectionId,
-          property.siteUrl,
-          rangeDays,
-          searchType,
-          endDate
-        );
-        return { ...property, ...data, error: null };
-      } catch (error) {
-        const length = period.mode === 'hourly' ? 24 : enumerateDates(dailyRange.startDate, dailyRange.endDate).length;
+        const windows = buildHourlyWindowsAtAnchor(item.rows, commonAnchor, 24);
+        const currentTotals = summarizeHourWindow(windows.current);
+        const previousTotals = summarizeHourWindow(windows.previous);
         return {
-          ...property,
-          currentSeries: emptySeries(length),
-          previousSeries: emptySeries(length),
-          metrics: emptyMetrics(),
-          rangeLabel: period.mode === 'hourly' ? '24 часа' : `${dailyRange.startDate} → ${dailyRange.endDate}`,
-          error: error instanceof Error ? error.message : 'Неизвестная ошибка API',
+          ...item.property,
+          currentSeries: {
+            clicks: windows.current.rows.map((row) => row.clicks),
+            impressions: windows.current.rows.map((row) => row.impressions),
+            position: windows.current.rows.map((row) => row.position ?? 0),
+          },
+          previousSeries: {
+            clicks: windows.previous.rows.map((row) => row.clicks),
+            impressions: windows.previous.rows.map((row) => row.impressions),
+            position: windows.previous.rows.map((row) => row.position ?? 0),
+          },
+          metrics: {
+            clicks: metricDelta(currentTotals.clicks, previousTotals.clicks),
+            impressions: metricDelta(currentTotals.impressions, previousTotals.impressions),
+            position: metricDelta(currentTotals.position, previousTotals.position),
+          },
+          rangeLabel: `${windows.current.start} → ${windows.current.end}`,
+          error: null,
         };
-      }
-    })
-  );
+      });
+    }
+  } else {
+    siteCards = await Promise.all(
+      filteredProperties.map(async (property): Promise<SiteCardData> => {
+        try {
+          const data = await getCachedDailySiteCardData(
+            property.id,
+            property.connectionId,
+            property.siteUrl,
+            rangeDays,
+            searchType,
+            endDate
+          );
+          return { ...property, ...data, error: null };
+        } catch (error) {
+          const length = enumerateDates(dailyRange.startDate, dailyRange.endDate).length;
+          return {
+            ...property,
+            currentSeries: emptySeries(length),
+            previousSeries: emptySeries(length),
+            metrics: emptyMetrics(),
+            rangeLabel: `${dailyRange.startDate} → ${dailyRange.endDate}`,
+            error: error instanceof Error ? error.message : 'Неизвестная ошибка API',
+          };
+        }
+      })
+    );
+  }
 
   const sortedSites = [...siteCards].sort((left, right) =>
     compareSites(left, right, sort, visibleMetrics[0] || 'clicks')
   );
 
-  const portfolioSummary = buildPortfolioSummary(siteCards);
-  const summaryRangeLabel =
-    period.mode === 'hourly'
-      ? periodLabel('24h')
-      : `${dailyRange.startDate} → ${dailyRange.endDate}`;
+  const portfolioSummary = buildPortfolioSummary(siteCards.filter((site) => !site.error));
 
   return (
     <main className="page-shell seo-shell">
@@ -307,6 +390,12 @@ export default async function DashboardPage({
         </div>
       </section>
 
+      {hourlyEmptyMessage ? (
+        <section className="panel">
+          <EmptyState title="Нет почасовых данных" text={hourlyEmptyMessage} />
+        </section>
+      ) : null}
+
       {sortedSites.length === 0 ? (
         <section className="panel">
           <EmptyState
@@ -314,7 +403,7 @@ export default async function DashboardPage({
             text="Измените поиск, период или фильтры — здесь появятся выбранные ресурсы Search Console."
           />
         </section>
-      ) : (
+      ) : !hourlyEmptyMessage ? (
         <section className="portfolio-grid">
           {sortedSites.map((site) => (
             <PortfolioCard
@@ -333,7 +422,7 @@ export default async function DashboardPage({
             />
           ))}
         </section>
-      )}
+      ) : null}
 
       <section className="panel panel-compact sites-scroll-panel manage-grid">
         <div className="panel-header">

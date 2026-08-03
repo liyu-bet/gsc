@@ -28,6 +28,8 @@ export type AggregatedDimensionRow = {
 };
 
 const HOUR_ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([+-]\d{2}:\d{2}|Z)$/;
+const PACIFIC_TZ = 'America/Los_Angeles';
+const MS_PER_HOUR = 60 * 60 * 1000;
 
 function asFiniteNumber(value: number | null | undefined): number {
   const parsed = Number(value ?? 0);
@@ -100,8 +102,55 @@ function emptyHourRow(hour: string): HourlyMetricRow {
 }
 
 /**
+ * Format an absolute instant as a GSC-style Pacific hour key with the
+ * actual America/Los_Angeles offset at that instant (handles PST/PDT).
+ */
+export function formatPacificHourKey(targetMs: number): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: PACIFIC_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+    timeZoneName: 'longOffset',
+  }).formatToParts(new Date(targetMs));
+
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value || '';
+
+  const year = get('year');
+  const month = get('month');
+  const day = get('day');
+  const hour = get('hour');
+  const tzName = get('timeZoneName'); // e.g. GMT-07:00 / GMT-08:00 / UTC
+  let offset = 'Z';
+  if (tzName.startsWith('GMT') && tzName.length > 3) {
+    offset = tzName.slice(3); // -07:00
+  } else if (tzName === 'UTC' || tzName === 'GMT') {
+    offset = 'Z';
+  }
+
+  return `${year}-${month}-${day}T${hour}:00:00${offset === 'Z' ? 'Z' : offset}`;
+}
+
+/** @deprecated Prefer formatPacificHourKey; kept for call-site compatibility. */
+export function synthesizeHourKey(_templateHour: string, targetMs: number): string {
+  return formatPacificHourKey(targetMs);
+}
+
+function findHourKeyAtMs(rowsByHour: Map<string, HourlyMetricRow>, targetMs: number): string | null {
+  for (const key of rowsByHour.keys()) {
+    if (parseHourMs(key) === targetMs) return key;
+  }
+  return null;
+}
+
+/**
  * Build a continuous hour scale ending at `anchorHour` (inclusive),
- * length = `hours`. Missing hours are zero-filled.
+ * length = `hours`. Missing hours are zero-filled with DST-correct Pacific keys.
  */
 export function buildFilledHourWindow(
   rowsByHour: Map<string, HourlyMetricRow>,
@@ -115,10 +164,9 @@ export function buildFilledHourWindow(
 
   const rows: HourlyMetricRow[] = [];
   for (let offset = hours - 1; offset >= 0; offset -= 1) {
-    const targetMs = anchorMs - offset * 60 * 60 * 1000;
-    // Prefer an exact key from API when present at this timestamp; otherwise synthesize ISO.
+    const targetMs = anchorMs - offset * MS_PER_HOUR;
     const existingKey = findHourKeyAtMs(rowsByHour, targetMs);
-    const hourKey = existingKey || synthesizeHourKey(anchorHour, targetMs);
+    const hourKey = existingKey || formatPacificHourKey(targetMs);
     rows.push(rowsByHour.get(hourKey) || emptyHourRow(hourKey));
   }
 
@@ -129,63 +177,59 @@ export function buildFilledHourWindow(
   };
 }
 
-function findHourKeyAtMs(rowsByHour: Map<string, HourlyMetricRow>, targetMs: number): string | null {
-  for (const key of rowsByHour.keys()) {
-    if (parseHourMs(key) === targetMs) return key;
-  }
-  return null;
+export function findLatestAvailableHour(rows: HourlyMetricRow[]): string | null {
+  if (!rows.length) return null;
+  const sorted = [...rows].sort((a, b) => compareHourKeys(a.hour, b.hour));
+  return sorted[sorted.length - 1]?.hour || null;
 }
 
-function synthesizeHourKey(templateHour: string, targetMs: number): string {
-  const offsetMatch = templateHour.match(/([+-]\d{2}:\d{2}|Z)$/);
-  const offset = offsetMatch?.[1] || 'Z';
-  const date = new Date(targetMs);
-
-  if (offset === 'Z') {
-    return `${formatUtcComponents(date)}Z`;
-  }
-
-  const sign = offset.startsWith('-') ? -1 : 1;
-  const [hoursRaw, minutesRaw] = offset.slice(1).split(':');
-  const offsetMinutes = sign * (Number(hoursRaw) * 60 + Number(minutesRaw));
-  const localMs = targetMs + offsetMinutes * 60 * 1000;
-  const local = new Date(localMs);
-  return `${formatUtcComponents(local)}${offset}`;
-}
-
-function formatUtcComponents(date: Date): string {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const d = String(date.getUTCDate()).padStart(2, '0');
-  const h = String(date.getUTCHours()).padStart(2, '0');
-  return `${y}-${m}-${d}T${h}:00:00`;
-}
-
-export function buildLatestHourlyWindows(
+/**
+ * Build current/previous windows ending at a fixed anchor (inclusive).
+ * Does not pick its own latest hour from the rows.
+ */
+export function buildHourlyWindowsAtAnchor(
   rows: HourlyMetricRow[],
+  anchorHour: string,
   hours = 24
 ): HourlyWindows {
-  const normalized = [...rows].sort((a, b) => compareHourKeys(a.hour, b.hour));
-  if (!normalized.length) {
+  const anchorMs = parseHourMs(anchorHour);
+  if (anchorMs === null || hours <= 0) {
     const empty: HourWindow = { start: '', end: '', rows: [] };
     return { current: empty, previous: empty, latestAvailableHour: null };
   }
 
-  const latestAvailableHour = normalized[normalized.length - 1].hour;
-  const rowsByHour = new Map(normalized.map((row) => [row.hour, row]));
-
-  const current = buildFilledHourWindow(rowsByHour, latestAvailableHour, hours);
-  const previousAnchorMs = parseHourMs(latestAvailableHour);
-  if (previousAnchorMs === null) {
-    return { current, previous: { start: '', end: '', rows: [] }, latestAvailableHour };
-  }
-
-  const previousAnchor = synthesizeHourKey(latestAvailableHour, previousAnchorMs - hours * 60 * 60 * 1000);
-  // Prefer an existing key at previous anchor timestamp when available.
-  const previousAnchorExisting = findHourKeyAtMs(rowsByHour, previousAnchorMs - hours * 60 * 60 * 1000) || previousAnchor;
+  const rowsByHour = new Map(rows.map((row) => [row.hour, row]));
+  const current = buildFilledHourWindow(rowsByHour, anchorHour, hours);
+  const previousAnchorMs = anchorMs - hours * MS_PER_HOUR;
+  const previousAnchorExisting =
+    findHourKeyAtMs(rowsByHour, previousAnchorMs) || formatPacificHourKey(previousAnchorMs);
   const previous = buildFilledHourWindow(rowsByHour, previousAnchorExisting, hours);
 
-  return { current, previous, latestAvailableHour };
+  return {
+    current,
+    previous,
+    latestAvailableHour: anchorHour,
+  };
+}
+
+/**
+ * Choose the earliest (minimum) latestAvailableHour among sites.
+ * Returns null when no valid hours are provided.
+ */
+export function chooseCommonHourlyAnchor(latestHours: Array<string | null | undefined>): string | null {
+  const valid = latestHours.filter((hour): hour is string => Boolean(hour && parseHourMs(hour) !== null));
+  if (!valid.length) return null;
+  return [...valid].sort(compareHourKeys)[0] || null;
+}
+
+export function buildLatestHourlyWindows(rows: HourlyMetricRow[], hours = 24): HourlyWindows {
+  const normalized = [...rows].sort((a, b) => compareHourKeys(a.hour, b.hour));
+  const latestAvailableHour = findLatestAvailableHour(normalized);
+  if (!latestAvailableHour) {
+    const empty: HourWindow = { start: '', end: '', rows: [] };
+    return { current: empty, previous: empty, latestAvailableHour: null };
+  }
+  return buildHourlyWindowsAtAnchor(normalized, latestAvailableHour, hours);
 }
 
 export function hourInWindow(hour: string, window: HourWindow): boolean {
@@ -302,13 +346,21 @@ export function enrichAggregatedRows(
   });
 }
 
+/** Count delta between independent current/previous dimension lists. */
+export function dimensionCountDelta(currentCount: number, previousCount: number) {
+  return {
+    current: currentCount,
+    previous: previousCount,
+    delta: currentCount - previousCount,
+  };
+}
+
 /** Calendar date span in Pacific Time covering at least `hoursBack` hours ending now. */
 export function hourlyFetchDateSpan(
   now: Date = new Date(),
   hoursBack = 72
 ): { startDate: string; endDate: string } {
   const endDate = gscCalendarDate(now);
-  // Request enough calendar days to cover hoursBack plus buffer for DST.
   const days = Math.ceil(hoursBack / 24) + 1;
   const startMs = now.getTime() - days * 24 * 60 * 60 * 1000;
   const startDate = gscCalendarDate(new Date(startMs));
@@ -319,7 +371,7 @@ export function hoursAgoLabel(latestAvailableHour: string | null, now: Date = ne
   if (!latestAvailableHour) return null;
   const ms = parseHourMs(latestAvailableHour);
   if (ms === null) return null;
-  const diffHours = Math.max(0, Math.round((now.getTime() - ms) / (60 * 60 * 1000)));
+  const diffHours = Math.max(0, Math.round((now.getTime() - ms) / MS_PER_HOUR));
   if (diffHours === 0) return 'менее часа назад';
   if (diffHours === 1) return 'около 1 часа назад';
   if (diffHours < 5) return `около ${diffHours} часов назад`;

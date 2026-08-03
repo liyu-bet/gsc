@@ -354,8 +354,8 @@ export default async function SiteDetailPage({
     period: period.id,
     searchType,
     compare: compare ? '1' : '0',
-    ...(period.mode === 'custom' && incoming.startDate && incoming.endDate
-      ? { startDate: incoming.startDate, endDate: incoming.endDate }
+    ...(period.mode === 'custom'
+      ? { startDate: period.startDate, endDate: period.endDate }
       : {}),
     ...activeFilters,
   };
@@ -371,6 +371,10 @@ export default async function SiteDetailPage({
     });
   }
 
+  let currentQueryCount = 0;
+  let previousQueryCount = 0;
+  let currentPageCount = 0;
+  let previousPageCount = 0;
   let pageRows: EnrichedRow[] = [];
   let queryRows: EnrichedRow[] = [];
   let deviceRows: EnrichedRow[] = [];
@@ -463,20 +467,18 @@ export default async function SiteDetailPage({
     const countriesNorm = normalizeDetailHourRows(countriesDetail.rows);
     const devicesNorm = normalizeDetailHourRows(devicesDetail.rows);
 
-    queryRows = attachHref(
-      enrichAggregatedRows(
-        aggregateDetailRowsForWindow(queriesNorm, windows.current),
-        aggregateDetailRowsForWindow(queriesNorm, windows.previous)
-      ),
-      'query'
-    );
-    pageRows = attachHref(
-      enrichAggregatedRows(
-        aggregateDetailRowsForWindow(pagesNorm, windows.current),
-        aggregateDetailRowsForWindow(pagesNorm, windows.previous)
-      ),
-      'page'
-    );
+    const currentQueries = aggregateDetailRowsForWindow(queriesNorm, windows.current);
+    const previousQueries = aggregateDetailRowsForWindow(queriesNorm, windows.previous);
+    const currentPages = aggregateDetailRowsForWindow(pagesNorm, windows.current);
+    const previousPages = aggregateDetailRowsForWindow(pagesNorm, windows.previous);
+
+    currentQueryCount = currentQueries.length;
+    previousQueryCount = previousQueries.length;
+    currentPageCount = currentPages.length;
+    previousPageCount = previousPages.length;
+
+    queryRows = attachHref(enrichAggregatedRows(currentQueries, previousQueries), 'query');
+    pageRows = attachHref(enrichAggregatedRows(currentPages, previousPages), 'page');
     countryRows = attachHref(
       enrichAggregatedRows(
         aggregateDetailRowsForWindow(countriesNorm, windows.current),
@@ -492,10 +494,7 @@ export default async function SiteDetailPage({
       'device'
     );
     newRankings = attachHref(
-      enrichAggregatedRows(
-        aggregateDetailRowsForWindow(queriesNorm, windows.current),
-        aggregateDetailRowsForWindow(queriesNorm, windows.previous)
-      )
+      enrichAggregatedRows(currentQueries, previousQueries)
         .filter((row) => row.previousImpressions === 0 && row.impressions > 0)
         .sort((a, b) => b.impressions - a.impressions)
         .slice(0, 50),
@@ -522,13 +521,11 @@ export default async function SiteDetailPage({
     };
   } else {
     const endDate = normalizeGscDate(
-      period.mode === 'custom' ? incoming.endDate : undefined,
+      period.mode === 'custom' ? period.endDate : undefined,
       gscCalendarDate()
     );
     const startDate =
-      period.mode === 'custom' && incoming.startDate
-        ? normalizeGscDate(incoming.startDate, endDate)
-        : undefined;
+      period.mode === 'custom' ? normalizeGscDate(period.startDate, endDate) : undefined;
     const days = period.mode === 'daily' ? period.days : 28;
     const range = buildDateRange(days, endDate, startDate);
     dailyStart = range.startDate;
@@ -711,6 +708,10 @@ export default async function SiteDetailPage({
 
     pageRows = attachHref(enrichRows(pagesCurrent.rows, pagesPrevious.rows), 'page');
     queryRows = attachHref(enrichRows(queriesCurrent.rows, queriesPrevious.rows), 'query');
+    currentQueryCount = queriesCurrent.rows.length;
+    previousQueryCount = queriesPrevious.rows.length;
+    currentPageCount = pagesCurrent.rows.length;
+    previousPageCount = pagesPrevious.rows.length;
     deviceRows = attachHref(
       enrichRows(devicesCurrent.rows, devicesPrevious.rows).map((row) => ({
         ...row,
@@ -786,17 +787,7 @@ export default async function SiteDetailPage({
     },
   ];
 
-  const currentQueryCount = queryRows.length;
-  const previousQueryCount = queryRows.filter((row) => row.previousImpressions > 0 || row.previousClicks > 0)
-    .length;
-  // Approximate previous count from rows that had previous metrics; for daily path previous API length is better.
-  const queryCountDelta =
-    period.mode === 'hourly'
-      ? currentQueryCount - previousQueryCount
-      : currentQueryCount - previousQueryCount;
-  const currentPageCount = pageRows.length;
-  const previousPageCount = pageRows.filter((row) => row.previousImpressions > 0 || row.previousClicks > 0)
-    .length;
+  const queryCountDelta = currentQueryCount - previousQueryCount;
   const pageCountDelta = currentPageCount - previousPageCount;
 
   const overviewCards = [
@@ -908,8 +899,8 @@ export default async function SiteDetailPage({
         <SiteControls
           currentPeriodId={period.id}
           currentSearchType={searchType}
-          currentStartDate={period.mode === 'custom' ? incoming.startDate : undefined}
-          currentEndDate={period.mode === 'custom' ? incoming.endDate : undefined}
+          currentStartDate={period.mode === 'custom' ? period.startDate : undefined}
+          currentEndDate={period.mode === 'custom' ? period.endDate : undefined}
           compare={compare}
           isCustom={period.mode === 'custom'}
           clearFiltersHref={clearFiltersHref}

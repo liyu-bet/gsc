@@ -2,12 +2,17 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   aggregateDetailRowsForWindow,
+  buildHourlyWindowsAtAnchor,
   buildLatestHourlyWindows,
+  chooseCommonHourlyAnchor,
   compareHourKeys,
+  dimensionCountDelta,
   enrichAggregatedRows,
+  formatPacificHourKey,
   hourInWindow,
   normalizeDetailHourRows,
   normalizeHourlyRows,
+  parseHourMs,
   summarizeHourWindow,
 } from './hourly-ranges';
 
@@ -197,33 +202,105 @@ describe('hourly-ranges aggregation', () => {
       assert.equal(aggregated[0]?.impressions, 4);
     }
   });
+
+  it('counts previous keys that are missing from current independently', () => {
+    const previous = ['alpha', 'beta', 'gamma'];
+    const current = ['alpha', 'delta'];
+    assert.deepEqual(dimensionCountDelta(current.length, previous.length), {
+      current: 2,
+      previous: 3,
+      delta: -1,
+    });
+  });
+});
+
+describe('portfolio common anchor', () => {
+  it('chooses the minimum latestAvailableHour across sites', () => {
+    assert.equal(
+      chooseCommonHourlyAnchor(['2026-08-02T14:00:00-07:00', '2026-08-02T12:00:00-07:00']),
+      '2026-08-02T12:00:00-07:00'
+    );
+  });
+
+  it('builds both site windows ending at the common anchor', () => {
+    const commonAnchor = chooseCommonHourlyAnchor([
+      '2026-08-02T14:00:00-07:00',
+      '2026-08-02T12:00:00-07:00',
+    ]);
+    assert.equal(commonAnchor, '2026-08-02T12:00:00-07:00');
+
+    const siteA = buildHourlyWindowsAtAnchor(
+      [hour('2026-08-02T14:00:00-07:00', 9, 90, 4), hour('2026-08-02T12:00:00-07:00', 3, 30, 2)],
+      commonAnchor!,
+      24
+    );
+    const siteB = buildHourlyWindowsAtAnchor(
+      [hour('2026-08-02T12:00:00-07:00', 5, 50, 3)],
+      commonAnchor!,
+      24
+    );
+
+    assert.equal(siteA.current.end, '2026-08-02T12:00:00-07:00');
+    assert.equal(siteB.current.end, '2026-08-02T12:00:00-07:00');
+    assert.equal(siteA.current.rows.length, 24);
+    assert.equal(siteB.current.rows.length, 24);
+    // Site A data after the common anchor is ignored for the shared window end.
+    assert.equal(siteA.current.rows[siteA.current.rows.length - 1]?.clicks, 3);
+  });
+});
+
+describe('DST-safe synthetic hour keys', () => {
+  it('uses PDT offset after spring forward', () => {
+    // 2026-03-08 10:00 UTC = 02:00 PST; 11:00 UTC = 04:00 PDT (02:00-03:00 skipped).
+    const before = formatPacificHourKey(Date.parse('2026-03-08T09:00:00.000Z')); // 01:00-08:00
+    const after = formatPacificHourKey(Date.parse('2026-03-08T11:00:00.000Z')); // 04:00-07:00
+    assert.equal(before, '2026-03-08T01:00:00-08:00');
+    assert.equal(after, '2026-03-08T04:00:00-07:00');
+  });
+
+  it('uses PST offset after fall back', () => {
+    const pdt = formatPacificHourKey(Date.parse('2026-11-01T08:00:00.000Z')); // 01:00 PDT
+    const pst = formatPacificHourKey(Date.parse('2026-11-01T09:00:00.000Z')); // 01:00 PST
+    assert.equal(pdt, '2026-11-01T01:00:00-07:00');
+    assert.equal(pst, '2026-11-01T01:00:00-08:00');
+    assert.notEqual(pdt, pst);
+  });
+
+  it('fills a missing DST-boundary hour with the correct Pacific offset', () => {
+    // Anchor after spring forward; leave the jump hour missing in source rows.
+    const rows = [
+      hour('2026-03-08T00:00:00-08:00', 1, 10, 1),
+      hour('2026-03-08T01:00:00-08:00', 2, 20, 2),
+      hour('2026-03-08T04:00:00-07:00', 4, 40, 4),
+    ];
+    const windows = buildLatestHourlyWindows(rows, 4);
+    assert.equal(windows.current.rows.length, 4);
+    const keys = windows.current.rows.map((row) => row.hour);
+    assert.deepEqual(new Set(keys).size, keys.length);
+    // Absolute step between consecutive keys is exactly one hour.
+    for (let i = 1; i < keys.length; i += 1) {
+      assert.equal(parseHourMs(keys[i]!)! - parseHourMs(keys[i - 1]!)!, 3_600_000);
+    }
+  });
+
+  it('keeps unique ISO keys across a filled fall-back window', () => {
+    const anchor = '2026-11-01T02:00:00-08:00';
+    const windows = buildHourlyWindowsAtAnchor(
+      [
+        hour('2026-11-01T00:00:00-07:00', 1, 1, 1),
+        hour('2026-11-01T02:00:00-08:00', 4, 4, 4),
+      ],
+      anchor,
+      4
+    );
+    const keys = windows.current.rows.map((row) => row.hour);
+    assert.equal(new Set(keys).size, 4);
+    for (let i = 1; i < keys.length; i += 1) {
+      assert.equal(parseHourMs(keys[i]!)! - parseHourMs(keys[i - 1]!)!, 3_600_000);
+    }
+  });
 });
 
 function synthesizePacific(ms: number): string {
-  // Format instant as America/Los_Angeles wall clock with numeric offset.
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Los_Angeles',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(new Date(ms));
-  const get = (type: string) => parts.find((part) => part.type === type)?.value || '00';
-  const asUtc = Date.UTC(
-    Number(get('year')),
-    Number(get('month')) - 1,
-    Number(get('day')),
-    Number(get('hour')),
-    Number(get('minute')),
-    Number(get('second'))
-  );
-  const offsetMinutes = Math.round((asUtc - ms) / 60000);
-  const sign = offsetMinutes >= 0 ? '+' : '-';
-  const abs = Math.abs(offsetMinutes);
-  const oh = String(Math.floor(abs / 60)).padStart(2, '0');
-  const om = String(abs % 60).padStart(2, '0');
-  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:00:00${sign}${oh}:${om}`;
+  return formatPacificHourKey(ms);
 }
