@@ -278,13 +278,16 @@ describe('status labels and public serializer', () => {
       lastErrorAt: new Date('2026-08-01T12:00:00.000Z'),
       lastSuccessAt: new Date('2026-08-01T11:00:00.000Z'),
       propertiesCount: 3,
+      scope: 'openid email https://www.googleapis.com/auth/webmasters',
     });
     const raw = JSON.stringify(view);
     assert.equal(raw.includes('encryptedAccess'), false);
     assert.equal(raw.includes('encryptedRefresh'), false);
     assert.equal(raw.includes('tokenExpiry'), false);
+    assert.equal(raw.includes('"scope"'), false);
     assert.equal(view.canRetry, true);
     assert.equal(view.canReconnect, true);
+    assert.equal(view.canManageSitemaps, true);
     assert.equal(view.statusLabel, 'Временная ошибка');
   });
 });

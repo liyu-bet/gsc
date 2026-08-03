@@ -151,7 +151,7 @@ describe('LOW integration serializers', () => {
     assert.equal(JSON.stringify(item).includes('GOOGLE_CLIENT_SECRET'), false);
   });
 
-  it('does not serialize Google connection health fields', () => {
+  it('does not serialize Google connection health or OAuth capability fields', () => {
     const item = serializeLowProperty({
       id: 'prop_1',
       siteUrl: 'https://example.com/',
@@ -173,6 +173,11 @@ describe('LOW integration serializers', () => {
       'lastErrorMessage',
       'lastErrorAt',
       'lastSuccessAt',
+      'scope',
+      'canManageSitemaps',
+      'requiresSitemapUpgrade',
+      'scopeKnown',
+      'isReadonly',
     ]) {
       assert.equal(keys.has(key), false, `LOW contract must not expose ${key}`);
     }

@@ -15,6 +15,7 @@ import {
   chooseEncryptedRefreshToken,
   chooseOAuthScope,
 } from './google-reconnect';
+import type { GoogleOAuthIntent } from './google-oauth-state';
 
 export type GoogleTokenResponse = {
   access_token: string;
@@ -67,7 +68,13 @@ export function latestAvailableDate(): string {
   return format(subDays(new Date(), 2), 'yyyy-MM-dd');
 }
 
-export function buildGoogleAuthUrl(state: string): string {
+export function buildGoogleAuthUrl(
+  state: string,
+  options?: { intent?: GoogleOAuthIntent }
+): string {
+  // consent + select_account for connect/reconnect/upgrade so Google re-prompts
+  // permissions (required for sitemap scope upgrade) and the correct account.
+  void options?.intent;
   const params = new URLSearchParams({
     client_id: env.googleClientId,
     redirect_uri: env.googleRedirectUri,

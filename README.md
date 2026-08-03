@@ -73,7 +73,7 @@ DATABASE_URL=postgresql://gsc:gscpassword@postgres:5432/gsc_dashboard?schema=pub
 GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 GOOGLE_REDIRECT_URI=https://gsc.yourdomain.com/api/google/callback
-GOOGLE_OAUTH_SCOPES=openid email profile https://www.googleapis.com/auth/webmasters.readonly
+GOOGLE_OAUTH_SCOPES=openid email profile https://www.googleapis.com/auth/webmasters
 ```
 
 Generate a valid encryption key:
@@ -101,7 +101,13 @@ In Google Cloud Console:
   - `openid`
   - `email`
   - `profile`
-  - `https://www.googleapis.com/auth/webmasters.readonly`
+  - `https://www.googleapis.com/auth/webmasters` (full Search Console access)
+
+The full `webmasters` scope covers reading Search Analytics **and** managing sitemaps.
+You do **not** need to add `webmasters.readonly` at the same time.
+
+Changing the consented scope may require users to re-approve the consent screen
+(and existing accounts can upgrade from the UI without a database migration).
 
 ### Create OAuth Client ID
 
@@ -112,7 +118,34 @@ Add these values:
 - Authorized JavaScript origin: `https://gsc.yourdomain.com`
 - Authorized redirect URI: `https://gsc.yourdomain.com/api/google/callback`
 
+The redirect URI must exactly match `GOOGLE_REDIRECT_URI`.
+
 Copy the client ID and client secret to `.env`.
+
+## 5.1 Google OAuth permissions (sitemap-ready)
+
+Why the app requests full Search Console access:
+
+1. The dashboard needs Search Console analytics (clicks, impressions, position).
+2. The same full `webmasters` scope is also what Google requires to manage sitemaps later.
+3. The app does **not** get access to your website files, FTP, hosting, or page content.
+4. The app cannot edit page HTML or CMS content.
+5. Existing accounts that still have readonly access keep working for analytics.
+6. To enable sitemap management later, expand permissions once from the account menu.
+7. When expanding permissions, choose the **same** Google account.
+8. If you decline the upgrade, analytics continues to work.
+9. Scope capability is shown next to each Google account (separate from connection health).
+10. Raw OAuth tokens are never shown in the UI; they are stored encrypted in PostgreSQL.
+
+### Migrating existing readonly connections
+
+- No Prisma / SQL migration is required for this OAuth change.
+- Readonly connections remain readable for analytics.
+- Use **«Разрешить управление sitemap»** / **«Проверить разрешения»** in the UI.
+- Reconnect with the same Google account when prompted.
+- After a successful upgrade the badge shows **«Sitemap: доступ разрешён»**.
+- Update production `GOOGLE_OAUTH_SCOPES` only when you intentionally roll out the new default
+  (code default is already full `webmasters`; leave existing VPS `.env` unchanged until you are ready).
 
 ## 6. Start the app
 

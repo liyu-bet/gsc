@@ -8,6 +8,7 @@ import {
   isBlockedConnectionStatus,
   publicConnectionStatusLabel,
 } from './connection-status';
+import { getGoogleScopeCapabilities } from './google-scopes';
 
 export { isBlockedConnectionStatus, publicConnectionStatusLabel };
 export const SUCCESS_WRITE_THROTTLE_MS = 5 * 60 * 1000;
@@ -184,6 +185,10 @@ export type PublicConnectionView = {
   propertiesCount: number;
   canRetry: boolean;
   canReconnect: boolean;
+  canManageSitemaps: boolean;
+  requiresSitemapUpgrade: boolean;
+  scopeKnown: boolean;
+  isReadonly: boolean;
 };
 
 const FORBIDDEN_PUBLIC_KEYS = [
@@ -205,7 +210,10 @@ export function serializePublicConnection(input: {
   lastErrorAt: Date | null;
   lastSuccessAt: Date | null;
   propertiesCount?: number;
+  /** Internal only — never returned in the view. */
+  scope?: string | null;
 }): PublicConnectionView {
+  const caps = getGoogleScopeCapabilities(input.scope);
   const view: PublicConnectionView = {
     id: input.id,
     email: input.email,
@@ -223,6 +231,10 @@ export function serializePublicConnection(input: {
       input.status === 'REVOKED' ||
       input.status === 'REAUTH_REQUIRED' ||
       input.status === 'ERROR',
+    canManageSitemaps: caps.canManageSitemaps,
+    requiresSitemapUpgrade: caps.requiresSitemapUpgrade,
+    scopeKnown: caps.scopeKnown,
+    isReadonly: caps.isReadonly,
   };
 
   for (const key of FORBIDDEN_PUBLIC_KEYS) {
@@ -240,10 +252,12 @@ export function assertNoSecretsInJson(payload: unknown): void {
     'encryptedAccess',
     'encryptedRefresh',
     'tokenExpiry',
+    'googleUserId',
     'GOOGLE_CLIENT_SECRET',
     'client_secret',
     'refresh_token',
     'access_token',
+    '"scope"',
   ]) {
     if (raw.includes(key)) {
       throw new Error(`Secret field leaked in public JSON: ${key}`);

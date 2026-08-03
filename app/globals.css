@@ -108,6 +108,12 @@ select {
   border: 1px solid #fecdd3;
 }
 
+.alert.success {
+  background: #f0fdf4;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+}
+
 .stack,
 .stack-lg {
   display: flex;
@@ -436,6 +442,42 @@ a.accounts-icon-btn {
 
 .connection-status-error .connection-status-main {
   color: #a16207;
+}
+
+.google-scope {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.google-scope-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.google-scope-meta {
+  line-height: 1.3;
+}
+
+.google-scope-full .google-scope-main {
+  color: #15803d;
+}
+
+.google-scope-readonly .google-scope-main {
+  color: #a16207;
+}
+
+.google-scope-unknown .google-scope-main {
+  color: #475569;
+}
+
+.google-scope-upgrade {
+  align-self: flex-start;
+  margin-top: 2px;
 }
 
 .property-row-disabled {

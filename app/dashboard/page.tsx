@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { querySite } from '@/lib/google';
 import { GoogleApiError } from '@/lib/google-errors';
 import { isBlockedConnectionStatus } from '@/lib/connection-status';
+import { getGoogleScopeCapabilities } from '@/lib/google-scopes';
 import {
   buildComparisonRange,
   enumerateDates,
@@ -139,6 +140,7 @@ export default async function DashboardPage({
 }: {
   searchParams?: Promise<{
     google_error?: string;
+    google_notice?: string;
     q?: string;
     sort?: string;
     range?: string;
@@ -366,21 +368,29 @@ export default async function DashboardPage({
     <main className="page-shell seo-shell">
       <AppHeader
         compact
-        connections={connections.map((connection) => ({
-          id: connection.id,
-          email: connection.email,
-          name: connection.name,
-          propertiesCount: connection.properties.length,
-          status: connection.status,
-          lastErrorCode: connection.lastErrorCode,
-          lastErrorMessage: connection.lastErrorMessage,
-          lastSuccessAt: connection.lastSuccessAt
-            ? connection.lastSuccessAt.toISOString()
-            : null,
-        }))}
+        connections={connections.map((connection) => {
+          const caps = getGoogleScopeCapabilities(connection.scope);
+          return {
+            id: connection.id,
+            email: connection.email,
+            name: connection.name,
+            propertiesCount: connection.properties.length,
+            status: connection.status,
+            lastErrorCode: connection.lastErrorCode,
+            lastErrorMessage: connection.lastErrorMessage,
+            lastSuccessAt: connection.lastSuccessAt
+              ? connection.lastSuccessAt.toISOString()
+              : null,
+            canManageSitemaps: caps.canManageSitemaps,
+            requiresSitemapUpgrade: caps.requiresSitemapUpgrade,
+            scopeKnown: caps.scopeKnown,
+            isReadonly: caps.isReadonly,
+          };
+        })}
       />
 
       {params.google_error ? <div className="alert error">Ошибка подключения Google: {params.google_error}</div> : null}
+      {params.google_notice ? <div className="alert success">{params.google_notice}</div> : null}
 
       <DashboardToolbar
         compare={compare}

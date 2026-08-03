@@ -49,7 +49,7 @@ export const env = {
   get googleScopes() {
     return optional(
       'GOOGLE_OAUTH_SCOPES',
-      'openid email profile https://www.googleapis.com/auth/webmasters.readonly'
+      'openid email profile https://www.googleapis.com/auth/webmasters'
     );
   },
 };

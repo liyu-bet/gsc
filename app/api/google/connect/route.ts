@@ -4,6 +4,7 @@ import { buildGoogleAuthUrl } from '@/lib/google';
 import {
   createGoogleOAuthState,
   GOOGLE_OAUTH_STATE_COOKIE,
+  resolveGoogleOAuthIntent,
 } from '@/lib/google-oauth-state';
 import { prisma } from '@/lib/prisma';
 import { appUrl, isSecureAppUrl } from '@/lib/urls';
@@ -14,10 +15,20 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(appUrl('/login'));
   }
 
-  const connectionId = request.nextUrl.searchParams.get('connectionId');
-  if (connectionId) {
+  const resolved = resolveGoogleOAuthIntent({
+    intentParam: request.nextUrl.searchParams.get('intent'),
+    connectionId: request.nextUrl.searchParams.get('connectionId'),
+  });
+
+  if (!resolved.ok) {
+    return NextResponse.redirect(
+      appUrl(`/dashboard?google_error=${encodeURIComponent(resolved.message)}`)
+    );
+  }
+
+  if (resolved.connectionId) {
     const existing = await prisma.googleConnection.findUnique({
-      where: { id: connectionId },
+      where: { id: resolved.connectionId },
       select: { id: true },
     });
     if (!existing) {
@@ -27,8 +38,11 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const { stateParam, cookieValue } = createGoogleOAuthState(connectionId);
-  const redirectUrl = buildGoogleAuthUrl(stateParam);
+  const { stateParam, cookieValue } = createGoogleOAuthState({
+    intent: resolved.intent,
+    connectionId: resolved.connectionId,
+  });
+  const redirectUrl = buildGoogleAuthUrl(stateParam, { intent: resolved.intent });
   const response = NextResponse.redirect(redirectUrl);
   response.cookies.set(GOOGLE_OAUTH_STATE_COOKIE, cookieValue, {
     httpOnly: true,

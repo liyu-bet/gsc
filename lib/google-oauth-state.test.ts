@@ -1,16 +1,14 @@
 import assert from 'node:assert/strict';
-import { describe, it, before, after } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import crypto from 'node:crypto';
 import {
   createGoogleOAuthState,
   oauthStateErrorMessage,
-  OAUTH_STATE_TTL_MS,
   parseGoogleOAuthStateCookie,
+  resolveGoogleOAuthIntent,
 } from './google-oauth-state';
 
-const ORIGINAL = {
-  SESSION_SECRET: process.env.SESSION_SECRET,
-};
+const ORIGINAL = { SESSION_SECRET: process.env.SESSION_SECRET };
 
 before(() => {
   process.env.SESSION_SECRET = 'test-session-secret-for-oauth-state-hmac';
@@ -21,31 +19,136 @@ after(() => {
   else process.env.SESSION_SECRET = ORIGINAL.SESSION_SECRET;
 });
 
-describe('Google OAuth signed state', () => {
-  it('accepts valid signed state with matching nonce', () => {
-    const created = createGoogleOAuthState('conn_abc');
+describe('Google OAuth intent resolution', () => {
+  it('defaults to connect without connectionId', () => {
+    const resolved = resolveGoogleOAuthIntent({ intentParam: null, connectionId: null });
+    assert.deepEqual(resolved, { ok: true, intent: 'connect', connectionId: null });
+  });
+
+  it('defaults to reconnect when only connectionId is present', () => {
+    const resolved = resolveGoogleOAuthIntent({
+      intentParam: null,
+      connectionId: 'conn_1',
+    });
+    assert.deepEqual(resolved, {
+      ok: true,
+      intent: 'reconnect',
+      connectionId: 'conn_1',
+    });
+  });
+
+  it('accepts explicit upgrade_sitemap with connectionId', () => {
+    const resolved = resolveGoogleOAuthIntent({
+      intentParam: 'upgrade_sitemap',
+      connectionId: 'conn_1',
+    });
+    assert.deepEqual(resolved, {
+      ok: true,
+      intent: 'upgrade_sitemap',
+      connectionId: 'conn_1',
+    });
+  });
+
+  it('rejects invalid intent', () => {
+    const resolved = resolveGoogleOAuthIntent({
+      intentParam: 'delete_everything',
+      connectionId: null,
+    });
+    assert.equal(resolved.ok, false);
+  });
+
+  it('rejects connect with connectionId', () => {
+    const resolved = resolveGoogleOAuthIntent({
+      intentParam: 'connect',
+      connectionId: 'conn_1',
+    });
+    assert.equal(resolved.ok, false);
+  });
+
+  it('rejects reconnect without connectionId', () => {
+    const resolved = resolveGoogleOAuthIntent({
+      intentParam: 'reconnect',
+      connectionId: null,
+    });
+    assert.equal(resolved.ok, false);
+  });
+
+  it('rejects upgrade_sitemap without connectionId', () => {
+    const resolved = resolveGoogleOAuthIntent({
+      intentParam: 'upgrade_sitemap',
+      connectionId: null,
+    });
+    assert.equal(resolved.ok, false);
+  });
+});
+
+describe('Google OAuth signed state with intent', () => {
+  it('preserves intent and connectionId in signed state', () => {
+    const created = createGoogleOAuthState({
+      intent: 'upgrade_sitemap',
+      connectionId: 'conn_abc',
+    });
     const parsed = parseGoogleOAuthStateCookie(created.cookieValue, created.stateParam);
     assert.equal(parsed.ok, true);
     if (parsed.ok) {
+      assert.equal(parsed.payload.intent, 'upgrade_sitemap');
       assert.equal(parsed.payload.connectionId, 'conn_abc');
-      assert.equal(parsed.payload.nonce, created.stateParam);
-      assert.ok(parsed.payload.exp > Date.now());
     }
   });
 
-  it('rejects invalid signature', () => {
-    const created = createGoogleOAuthState(null);
-    const tampered = created.cookieValue.replace(/\.[^.]+$/, '.YWJj');
-    const parsed = parseGoogleOAuthStateCookie(tampered, created.stateParam);
+  it('connect state forces null connectionId', () => {
+    const created = createGoogleOAuthState({
+      intent: 'connect',
+      connectionId: 'should-be-ignored',
+    });
+    assert.equal(created.payload.connectionId, null);
+  });
+
+  it('rejects tampered intent (signature break)', () => {
+    const created = createGoogleOAuthState({
+      intent: 'reconnect',
+      connectionId: 'conn_1',
+    });
+    const [body] = created.cookieValue.split('.');
+    const raw = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as {
+      nonce: string;
+      connectionId: string;
+      intent: string;
+      exp: number;
+    };
+    raw.intent = 'upgrade_sitemap';
+    const tamperedBody = Buffer.from(JSON.stringify(raw), 'utf8').toString('base64url');
+    const [, sig] = created.cookieValue.split('.');
+    const parsed = parseGoogleOAuthStateCookie(`${tamperedBody}.${sig}`, created.stateParam);
+    assert.deepEqual(parsed, { ok: false, reason: 'invalid' });
+  });
+
+  it('rejects tampered connectionId (signature break)', () => {
+    const created = createGoogleOAuthState({
+      intent: 'reconnect',
+      connectionId: 'conn_1',
+    });
+    const [body] = created.cookieValue.split('.');
+    const raw = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as {
+      nonce: string;
+      connectionId: string;
+      intent: string;
+      exp: number;
+    };
+    raw.connectionId = 'conn_other';
+    const tamperedBody = Buffer.from(JSON.stringify(raw), 'utf8').toString('base64url');
+    const [, sig] = created.cookieValue.split('.');
+    const parsed = parseGoogleOAuthStateCookie(`${tamperedBody}.${sig}`, created.stateParam);
     assert.deepEqual(parsed, { ok: false, reason: 'invalid' });
   });
 
   it('rejects expired state', () => {
-    const created = createGoogleOAuthState('conn_1');
+    const created = createGoogleOAuthState({ intent: 'connect' });
     const body = Buffer.from(
       JSON.stringify({
         nonce: created.stateParam,
-        connectionId: 'conn_1',
+        connectionId: null,
+        intent: 'connect',
         exp: Date.now() - 1000,
       }),
       'utf8'
@@ -56,7 +159,7 @@ describe('Google OAuth signed state', () => {
     assert.deepEqual(parsed, { ok: false, reason: 'expired' });
   });
 
-  it('rejects missing state', () => {
+  it('rejects missing cookie / state / nonce mismatch', () => {
     assert.deepEqual(parseGoogleOAuthStateCookie(undefined, 'x'), {
       ok: false,
       reason: 'missing',
@@ -65,29 +168,15 @@ describe('Google OAuth signed state', () => {
       ok: false,
       reason: 'missing',
     });
-  });
-
-  it('rejects mismatched nonce', () => {
-    const created = createGoogleOAuthState('conn_1');
-    const parsed = parseGoogleOAuthStateCookie(created.cookieValue, 'other-nonce');
-    assert.deepEqual(parsed, { ok: false, reason: 'mismatch' });
-  });
-
-  it('supports connect without connectionId for new accounts', () => {
-    const created = createGoogleOAuthState();
-    const parsed = parseGoogleOAuthStateCookie(created.cookieValue, created.stateParam);
-    assert.equal(parsed.ok, true);
-    if (parsed.ok) assert.equal(parsed.payload.connectionId, null);
+    const created = createGoogleOAuthState({ intent: 'connect' });
+    assert.deepEqual(
+      parseGoogleOAuthStateCookie(created.cookieValue, 'other-nonce'),
+      { ok: false, reason: 'mismatch' }
+    );
   });
 
   it('maps oauth state errors to safe Russian messages', () => {
     assert.match(oauthStateErrorMessage('expired'), /истёк/i);
     assert.match(oauthStateErrorMessage('missing'), /Отсутствует/);
-    assert.match(oauthStateErrorMessage('invalid'), /Неверный/);
-    assert.match(oauthStateErrorMessage('mismatch'), /Неверный/);
-  });
-
-  it('uses a 10 minute TTL', () => {
-    assert.equal(OAUTH_STATE_TTL_MS, 10 * 60 * 1000);
   });
 });

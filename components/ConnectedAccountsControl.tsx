@@ -1,7 +1,8 @@
 'use client';
 
-import type { GoogleConnectionStatus } from '@prisma/client';
 import { ConnectionStatusBadge } from '@/components/ConnectionStatusBadge';
+import { GoogleScopeBadge } from '@/components/GoogleScopeBadge';
+import type { GoogleConnectionStatus } from '@prisma/client';
 
 export type ConnectionItem = {
   id: string;
@@ -12,6 +13,10 @@ export type ConnectionItem = {
   lastErrorCode: string | null;
   lastErrorMessage: string | null;
   lastSuccessAt: string | null;
+  canManageSitemaps: boolean;
+  requiresSitemapUpgrade: boolean;
+  scopeKnown: boolean;
+  isReadonly: boolean;
 };
 
 function RefreshIcon() {
@@ -79,6 +84,7 @@ export function ConnectedAccountsControl({ connections }: { connections: Connect
                   const blocked =
                     connection.status === 'REVOKED' ||
                     connection.status === 'REAUTH_REQUIRED';
+                  const needsReconnect = blocked;
                   return (
                     <li key={connection.id} className="accounts-list-item">
                       <div className="accounts-list-meta">
@@ -89,6 +95,16 @@ export function ConnectedAccountsControl({ connections }: { connections: Connect
                           status={connection.status}
                           lastSuccessAt={connection.lastSuccessAt}
                           lastErrorMessage={connection.lastErrorMessage}
+                        />
+                        <GoogleScopeBadge
+                          connectionId={connection.id}
+                          allowUpgrade={!needsReconnect}
+                          capabilities={{
+                            canManageSitemaps: connection.canManageSitemaps,
+                            requiresSitemapUpgrade: connection.requiresSitemapUpgrade,
+                            scopeKnown: connection.scopeKnown,
+                            isReadonly: connection.isReadonly,
+                          }}
                         />
                       </div>
                       <div className="accounts-list-actions">
@@ -121,7 +137,7 @@ export function ConnectedAccountsControl({ connections }: { connections: Connect
                         {connection.status !== 'ACTIVE' ? (
                           <a
                             className="accounts-icon-btn"
-                            href={`/api/google/connect?connectionId=${encodeURIComponent(connection.id)}`}
+                            href={`/api/google/connect?connectionId=${encodeURIComponent(connection.id)}&intent=reconnect`}
                             title="Переподключить"
                             aria-label={`Переподключить ${connection.email}`}
                           >
