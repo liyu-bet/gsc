@@ -215,10 +215,21 @@ describe('hourly-ranges aggregation', () => {
 });
 
 describe('portfolio common anchor', () => {
-  it('chooses the minimum latestAvailableHour across sites', () => {
+  it('chooses the minimum latestAvailableHour across fresh sites', () => {
     assert.equal(
       chooseCommonHourlyAnchor(['2026-08-02T14:00:00-07:00', '2026-08-02T12:00:00-07:00']),
       '2026-08-02T12:00:00-07:00'
+    );
+  });
+
+  it('ignores stale sites that would drag the portfolio days backward', () => {
+    assert.equal(
+      chooseCommonHourlyAnchor([
+        '2026-08-03T01:00:00-07:00',
+        '2026-08-02T23:00:00-07:00',
+        '2026-07-30T06:00:00-07:00', // 1 sparse hour from inactive property
+      ]),
+      '2026-08-02T23:00:00-07:00'
     );
   });
 

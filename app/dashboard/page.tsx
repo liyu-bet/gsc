@@ -128,7 +128,7 @@ const getCachedHourlyRows = unstable_cache(
       latestAvailableHour: findLatestAvailableHour(rows),
     };
   },
-  ['dashboard-site-cards-hourly-rows'],
+  ['dashboard-site-cards-hourly-rows-v2'],
   { revalidate: 300 }
 );
 
@@ -278,12 +278,17 @@ export default async function DashboardPage({
           currentSeries: {
             clicks: windows.current.rows.map((row) => row.clicks),
             impressions: windows.current.rows.map((row) => row.impressions),
-            position: windows.current.rows.map((row) => row.position ?? 0),
+            // Empty hours use position null/0 fillers — keep sparkline empty there.
+            position: windows.current.rows.map((row) =>
+              row.impressions > 0 && row.position != null ? row.position : Number.NaN
+            ),
           },
           previousSeries: {
             clicks: windows.previous.rows.map((row) => row.clicks),
             impressions: windows.previous.rows.map((row) => row.impressions),
-            position: windows.previous.rows.map((row) => row.position ?? 0),
+            position: windows.previous.rows.map((row) =>
+              row.impressions > 0 && row.position != null ? row.position : Number.NaN
+            ),
           },
           metrics: {
             clicks: metricDelta(currentTotals.clicks, previousTotals.clicks),

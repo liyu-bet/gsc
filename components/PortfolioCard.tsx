@@ -227,12 +227,13 @@ function buildChartPaths(
 }
 
 function normalizeMetricValues(metric: MetricKey, values: number[]) {
-  if (!values.length) {
+  const finite = values.filter((value) => Number.isFinite(value));
+  if (!finite.length) {
     return { min: 0, max: 1 };
   }
 
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  const min = Math.min(...finite);
+  const max = Math.max(...finite);
 
   if (metric === 'position') {
     return { min, max: max === min ? max + 1 : max };
@@ -253,13 +254,21 @@ function buildPath(
 
   const step = values.length === 1 ? width : width / (values.length - 1);
   const range = max - min || 1;
+  const parts: string[] = [];
+  let drawing = false;
 
-  const points = values.map((value, index) => {
+  values.forEach((value, index) => {
+    if (!Number.isFinite(value)) {
+      drawing = false;
+      return;
+    }
+
     const x = step * index;
     const normalized = metric === 'position' ? 1 - (value - min) / range : (value - min) / range;
     const y = height - normalized * height;
-    return `${index === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`;
+    parts.push(`${drawing ? 'L' : 'M'}${x.toFixed(2)},${y.toFixed(2)}`);
+    drawing = true;
   });
 
-  return points.join(' ');
+  return parts.join(' ');
 }

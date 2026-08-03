@@ -213,13 +213,34 @@ export function buildHourlyWindowsAtAnchor(
 }
 
 /**
- * Choose the earliest (minimum) latestAvailableHour among sites.
- * Returns null when no valid hours are provided.
+ * Choose a shared portfolio hourly anchor.
+ *
+ * Uses the minimum latestAvailableHour among sites that are still "fresh"
+ * relative to the newest site (default lag ≤ 6 hours). Stale one-off hours
+ * from nearly inactive properties must not drag the whole portfolio days back.
  */
-export function chooseCommonHourlyAnchor(latestHours: Array<string | null | undefined>): string | null {
+export const DEFAULT_PORTFOLIO_ANCHOR_MAX_LAG_HOURS = 6;
+
+export function chooseCommonHourlyAnchor(
+  latestHours: Array<string | null | undefined>,
+  options?: { maxLagHours?: number }
+): string | null {
   const valid = latestHours.filter((hour): hour is string => Boolean(hour && parseHourMs(hour) !== null));
   if (!valid.length) return null;
-  return [...valid].sort(compareHourKeys)[0] || null;
+
+  const sorted = [...valid].sort(compareHourKeys);
+  const newest = sorted[sorted.length - 1]!;
+  const newestMs = parseHourMs(newest);
+  if (newestMs === null) return null;
+
+  const maxLagHours = options?.maxLagHours ?? DEFAULT_PORTFOLIO_ANCHOR_MAX_LAG_HOURS;
+  const maxLagMs = Math.max(0, maxLagHours) * MS_PER_HOUR;
+  const freshEnough = sorted.filter((hour) => {
+    const ms = parseHourMs(hour);
+    return ms !== null && newestMs - ms <= maxLagMs;
+  });
+
+  return freshEnough[0] || newest;
 }
 
 export function buildLatestHourlyWindows(rows: HourlyMetricRow[], hours = 24): HourlyWindows {
