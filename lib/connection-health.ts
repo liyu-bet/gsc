@@ -63,6 +63,26 @@ export async function persistConnectionError(
   });
 }
 
+function logHealthPersistFailure(kind: 'error' | 'success', connectionId: string, cause: unknown): void {
+  const code = cause instanceof Error ? cause.name : 'unknown';
+  // Never log Prisma message/stack (may include connection strings or row data).
+  console.error(`[google-connection-health] failed to persist ${kind} for ${connectionId} (${code})`);
+}
+
+/**
+ * Best-effort health write: never masks an upstream GoogleApiError with a Prisma failure.
+ */
+export async function safePersistConnectionError(
+  connectionId: string,
+  error: GoogleApiError
+): Promise<void> {
+  try {
+    await persistConnectionError(connectionId, error);
+  } catch (cause) {
+    logHealthPersistFailure('error', connectionId, cause);
+  }
+}
+
 /**
  * Persist ACTIVE + clear errors after a successful Google call.
  *
@@ -103,6 +123,51 @@ export async function persistConnectionSuccess(
       lastSuccessAt: new Date(),
     },
   });
+}
+
+export async function safePersistConnectionSuccess(
+  connectionId: string,
+  options?: { force?: boolean; connection?: GoogleConnection }
+): Promise<void> {
+  try {
+    await persistConnectionSuccess(connectionId, options);
+  } catch (cause) {
+    logHealthPersistFailure('success', connectionId, cause);
+  }
+}
+
+/**
+ * Parse Google JSON body; on failure persist INVALID_RESPONSE and rethrow.
+ */
+export async function parseGoogleJsonResponse<T>(
+  connectionId: string,
+  response: Response,
+  safeMessage: string
+): Promise<T> {
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    const error = new GoogleApiError({
+      code: 'INVALID_RESPONSE',
+      safeMessage,
+      retryable: false,
+    });
+    await safePersistConnectionError(connectionId, error);
+    throw error;
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const error = new GoogleApiError({
+      code: 'INVALID_RESPONSE',
+      safeMessage,
+      retryable: false,
+    });
+    await safePersistConnectionError(connectionId, error);
+    throw error;
+  }
 }
 
 export type PublicConnectionView = {

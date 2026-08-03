@@ -19,6 +19,30 @@ jobs:
   quality:
     name: quality
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gsc
+          POSTGRES_PASSWORD: build
+          POSTGRES_DB: gsc_dashboard_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gsc -d gsc_dashboard_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://gsc:build@127.0.0.1:5432/gsc_dashboard_ci
+      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      SESSION_SECRET: ci-session-secret-for-build-only
+      ADMIN_EMAIL: ci@example.com
+      ADMIN_PASSWORD: ci-password
+      APP_URL: http://localhost:3000
+      GOOGLE_CLIENT_ID: ci-client-id
+      GOOGLE_CLIENT_SECRET: ci-client-secret
+      GOOGLE_REDIRECT_URI: http://localhost:3000/api/google/callback
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,6 +56,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Prisma validate / generate / migrate
+        run: |
+          npx prisma validate
+          npx prisma generate
+          npx prisma migrate deploy
+          npx prisma migrate status
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -40,16 +71,6 @@ jobs:
 
       - name: Build
         run: npm run build
-        env:
-          DATABASE_URL: postgresql://gsc:build@127.0.0.1:5432/gsc_dashboard
-          ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-          SESSION_SECRET: ci-session-secret-for-build-only
-          ADMIN_EMAIL: ci@example.com
-          ADMIN_PASSWORD: ci-password
-          APP_URL: http://localhost:3000
-          GOOGLE_CLIENT_ID: ci-client-id
-          GOOGLE_CLIENT_SECRET: ci-client-secret
-          GOOGLE_REDIRECT_URI: http://localhost:3000/api/google/callback
 
   build:
     needs: quality
@@ -95,7 +116,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     steps:
-      - name: Pull image and restart stack
+      - name: Pull image, migrate, then restart
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -104,7 +125,32 @@ jobs:
           script: |
             set -e
             cd /var/www/gsc
-            # Pull prebuilt image only — never build on the VPS.
+            mkdir -p backups
+
+            # 1) Pull prebuilt image only — never build on the VPS.
             docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull app
+
+            # 2) Pre-migration backup (compressed; never printed; stay on VPS disk).
+            BACKUP_FILE="backups/pre-migrate-$(date +%Y%m%d-%H%M%S).sql.gz"
+            docker exec -t gsc-postgres pg_dump -U gsc gsc_dashboard | gzip -c > "$BACKUP_FILE"
+            test -s "$BACKUP_FILE"
+            ls -lh "$BACKUP_FILE"
+
+            # 3) Apply migrations with the NEW image before swapping the running container.
+            # If this fails, set -e stops here and the old app container keeps serving.
+            docker compose -f docker-compose.yml -f docker-compose.ghcr.yml run --rm app npx prisma migrate deploy
+
+            # 4) Only after successful migration — restart on the new image.
             docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d --no-build
+
+            # 5) Smoke / health with short retries.
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              if curl --fail --silent --show-error http://127.0.0.1:8080/login > /dev/null; then
+                echo "smoke ok after attempt $i"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "smoke check failed after restart" >&2
+            exit 1
           script_stop: true

@@ -9,3 +9,5 @@ tsconfig.tsbuildinfo
 
 # случайные служебные файлы
 *.dump
+backups/
+tmp-*.sh

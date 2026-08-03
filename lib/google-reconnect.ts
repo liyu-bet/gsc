@@ -25,3 +25,12 @@ export function chooseEncryptedRefreshToken(
   if (newEncryptedRefresh) return newEncryptedRefresh;
   return existingEncryptedRefresh;
 }
+
+/** Prefer newly granted scope; otherwise keep the previously stored scope. */
+export function chooseOAuthScope(
+  newScope: string | null | undefined,
+  existingScope: string | null
+): string | null {
+  if (typeof newScope === 'string' && newScope.trim()) return newScope;
+  return existingScope;
+}

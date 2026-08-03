@@ -9,10 +9,11 @@ import {
   classifyNetworkError,
   GoogleApiError,
 } from './google-errors';
-import { persistConnectionSuccess } from './connection-health';
+import { safePersistConnectionSuccess, parseGoogleJsonResponse } from './connection-health';
 import {
   assertReconnectGoogleSub,
   chooseEncryptedRefreshToken,
+  chooseOAuthScope,
 } from './google-reconnect';
 
 export type GoogleTokenResponse = {
@@ -156,15 +157,11 @@ export async function listSearchConsoleSites(connectionId: string): Promise<GscS
     recordSuccess: true,
   });
 
-  let data: { siteEntry?: GscSiteEntry[] };
-  try {
-    data = (await response.json()) as { siteEntry?: GscSiteEntry[] };
-  } catch {
-    throw new GoogleApiError({
-      code: 'INVALID_RESPONSE',
-      safeMessage: 'Некорректный ответ Search Console sites.list',
-    });
-  }
+  const data = await parseGoogleJsonResponse<{ siteEntry?: GscSiteEntry[] }>(
+    connectionId,
+    response,
+    'Некорректный ответ Search Console sites.list'
+  );
   return data.siteEntry || [];
 }
 
@@ -213,7 +210,7 @@ export async function syncSitesForConnection(connectionId: string): Promise<numb
     }),
   ]);
 
-  await persistConnectionSuccess(connectionId, { force: true });
+  await safePersistConnectionSuccess(connectionId, { force: true });
   return sites.length;
 }
 
@@ -261,7 +258,7 @@ export async function saveOrUpdateConnection(input: {
           target.encryptedRefresh
         ),
         tokenExpiry: expiry,
-        scope: input.tokens.scope,
+        scope: chooseOAuthScope(input.tokens.scope, target.scope),
         ...healthReset,
       },
     });
@@ -284,7 +281,7 @@ export async function saveOrUpdateConnection(input: {
           existing.encryptedRefresh
         ),
         tokenExpiry: expiry,
-        scope: input.tokens.scope,
+        scope: chooseOAuthScope(input.tokens.scope, existing.scope),
         ...healthReset,
       },
     });
@@ -299,7 +296,7 @@ export async function saveOrUpdateConnection(input: {
       encryptedAccess: encrypt(input.tokens.access_token),
       encryptedRefresh: input.tokens.refresh_token ? encrypt(input.tokens.refresh_token) : null,
       tokenExpiry: expiry,
-      scope: input.tokens.scope,
+      scope: chooseOAuthScope(input.tokens.scope, null),
       ...healthReset,
     },
   });
@@ -323,14 +320,11 @@ export async function querySite(
     }
   );
 
-  try {
-    return (await response.json()) as SearchAnalyticsResponse;
-  } catch {
-    throw new GoogleApiError({
-      code: 'INVALID_RESPONSE',
-      safeMessage: 'Некорректный ответ Search Analytics',
-    });
-  }
+  return parseGoogleJsonResponse<SearchAnalyticsResponse>(
+    connectionId,
+    response,
+    'Некорректный ответ Search Analytics'
+  );
 }
 
 export function defaultDateRange(days = 28, endDateInput?: string): {

@@ -10,8 +10,8 @@ import {
 } from './google-errors';
 import { isBlockedConnectionStatus } from './connection-status';
 import {
-  persistConnectionError,
-  persistConnectionSuccess,
+  safePersistConnectionError,
+  safePersistConnectionSuccess,
 } from './connection-health';
 import { decrypt, encrypt } from './security';
 import { prisma } from './prisma';
@@ -147,7 +147,7 @@ export async function googleAuthorizedFetch(
     liveConnection = tokenResult.connection;
   } catch (error) {
     if (error instanceof GoogleApiError) {
-      await persistConnectionError(connectionId, error);
+      await safePersistConnectionError(connectionId, error);
     }
     throw error;
   }
@@ -164,7 +164,7 @@ export async function googleAuthorizedFetch(
     });
   } catch (error) {
     const classified = classifyNetworkError(error);
-    await persistConnectionError(connectionId, classified);
+    await safePersistConnectionError(connectionId, classified);
     throw classified;
   }
 
@@ -175,12 +175,12 @@ export async function googleAuthorizedFetch(
       bodyText,
       context: 'api',
     });
-    await persistConnectionError(connectionId, classified);
+    await safePersistConnectionError(connectionId, classified);
     throw classified;
   }
 
   if (!refreshed) {
-    await persistConnectionSuccess(connectionId, {
+    await safePersistConnectionSuccess(connectionId, {
       force: Boolean(recordSuccess),
       connection: liveConnection,
     });

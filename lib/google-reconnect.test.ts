@@ -4,12 +4,15 @@ import { GoogleApiError } from './google-errors';
 import {
   assertReconnectGoogleSub,
   chooseEncryptedRefreshToken,
+  chooseOAuthScope,
 } from './google-reconnect';
 import {
   shouldPersistSuccessWrite,
   SUCCESS_WRITE_THROTTLE_MS,
+  safePersistConnectionError,
 } from './connection-health';
 import { isBlockedConnectionStatus } from './connection-status';
+import { prisma } from './prisma';
 
 describe('OAuth reconnect account guard', () => {
   it('allows matching Google sub', () => {
@@ -39,6 +42,49 @@ describe('OAuth reconnect account guard', () => {
       chooseEncryptedRefreshToken('enc-new', 'enc-old'),
       'enc-new'
     );
+  });
+
+  it('replaces scope when Google returns a new scope', () => {
+    assert.equal(
+      chooseOAuthScope('openid email webmasters.readonly', 'openid email'),
+      'openid email webmasters.readonly'
+    );
+  });
+
+  it('keeps existing scope when Google omits a new scope', () => {
+    assert.equal(chooseOAuthScope(undefined, 'openid email'), 'openid email');
+    assert.equal(chooseOAuthScope('', 'openid email'), 'openid email');
+    assert.equal(chooseOAuthScope(null, 'openid email'), 'openid email');
+  });
+
+  it('uses null scope for brand-new connections without scope', () => {
+    assert.equal(chooseOAuthScope(undefined, null), null);
+  });
+});
+
+describe('best-effort health persistence', () => {
+  it('keeps RATE_LIMITED when Prisma health write fails', async () => {
+    const googleError = new GoogleApiError({
+      code: 'RATE_LIMITED',
+      status: 429,
+      retryable: true,
+      safeMessage: 'Слишком много запросов к Google. Повторите позже.',
+    });
+
+    const originalUpdate = prisma.googleConnection.update;
+    prisma.googleConnection.update = (async () => {
+      throw new Error('P2022: column does not exist');
+    }) as typeof prisma.googleConnection.update;
+
+    try {
+      await safePersistConnectionError('conn_test', googleError);
+      // Caller still rethrows the Google error — not Prisma.
+      assert.equal(googleError.code, 'RATE_LIMITED');
+      assert.equal(googleError.name, 'GoogleApiError');
+      assert.equal(String(googleError.message).includes('P2022'), false);
+    } finally {
+      prisma.googleConnection.update = originalUpdate;
+    }
   });
 });
 

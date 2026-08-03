@@ -42,6 +42,25 @@ const SECRET_PATTERNS = [
   /1\/\/[A-Za-z0-9_\-]+/g,
 ];
 
+const QUOTA_REASONS = new Set([
+  'dailylimitexceeded',
+  'dailylimitexceededunreg',
+  'quotaexceeded',
+  'limitexceeded',
+  'servinglimitexceeded',
+  'variabletermexpireddailyexceeded',
+  'variabletermlimitexceeded',
+]);
+
+const RATE_REASONS = new Set([
+  'ratelimitexceeded',
+  'ratelimitexceededunreg',
+  'userratelimitexceeded',
+  'userratelimitexceededunreg',
+]);
+
+const FORBIDDEN_SCOPE_REASONS = new Set(['insufficientpermissions']);
+
 export function redactSecrets(text: string): string {
   let next = text;
   for (const pattern of SECRET_PATTERNS) {
@@ -74,22 +93,59 @@ function parseOAuthErrorBody(bodyText: string): { error?: string; error_descript
   }
 }
 
-function mentionsInsufficientScope(bodyText: string): boolean {
-  const lower = bodyText.toLowerCase();
-  return (
-    lower.includes('insufficient') && lower.includes('scope')
-  ) || lower.includes('accessnotconfigured') || lower.includes('insufficientpermissions');
+/** Extract Google API `error.errors[].reason` values (and top-level reason if present). */
+export function extractGoogleErrorReasons(bodyText: string): string[] {
+  if (!bodyText.trim()) return [];
+  try {
+    const parsed = JSON.parse(bodyText) as {
+      error?:
+        | string
+        | {
+            errors?: Array<{ reason?: string }>;
+            reason?: string;
+            message?: string;
+            code?: number;
+          };
+      reason?: string;
+    };
+
+    const reasons: string[] = [];
+    if (typeof parsed.reason === 'string') reasons.push(parsed.reason);
+
+    if (parsed.error && typeof parsed.error === 'object') {
+      if (typeof parsed.error.reason === 'string') reasons.push(parsed.error.reason);
+      if (Array.isArray(parsed.error.errors)) {
+        for (const item of parsed.error.errors) {
+          if (item && typeof item.reason === 'string') reasons.push(item.reason);
+        }
+      }
+    }
+
+    return [...new Set(reasons.map((r) => r.trim()).filter(Boolean))];
+  } catch {
+    return [];
+  }
 }
 
-function mentionsQuotaExceeded(bodyText: string): boolean {
+function normalizeReason(reason: string): string {
+  return reason.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function mentionsInsufficientScopeText(bodyText: string): boolean {
   const lower = bodyText.toLowerCase();
   return (
-    lower.includes('quota') ||
-    lower.includes('daily limit') ||
-    lower.includes('userratelimitexceeded') ||
-    lower.includes('quotaexceeded') ||
-    lower.includes('ratelimitexceeded')
+    (lower.includes('insufficient') && lower.includes('scope')) ||
+    lower.includes('accessnotconfigured') ||
+    lower.includes('insufficient authentication scopes')
   );
+}
+
+function classifyByReasons(reasons: string[]): GoogleApiErrorCode | null {
+  const normalized = reasons.map(normalizeReason);
+  if (normalized.some((r) => QUOTA_REASONS.has(r))) return 'QUOTA_EXCEEDED';
+  if (normalized.some((r) => RATE_REASONS.has(r))) return 'RATE_LIMITED';
+  if (normalized.some((r) => FORBIDDEN_SCOPE_REASONS.has(r))) return 'INSUFFICIENT_SCOPE';
+  return null;
 }
 
 export function classifyGoogleHttpError(input: {
@@ -100,6 +156,7 @@ export function classifyGoogleHttpError(input: {
   const bodyText = input.bodyText || '';
   const oauth = parseOAuthErrorBody(bodyText);
   const context = input.context || 'api';
+  const reasons = extractGoogleErrorReasons(bodyText);
 
   if (context === 'token_refresh') {
     if (
@@ -134,7 +191,24 @@ export function classifyGoogleHttpError(input: {
   }
 
   if (input.status === 403) {
-    if (mentionsInsufficientScope(bodyText)) {
+    const byReason = classifyByReasons(reasons);
+    if (byReason === 'QUOTA_EXCEEDED') {
+      return new GoogleApiError({
+        code: 'QUOTA_EXCEEDED',
+        status: 403,
+        retryable: true,
+        safeMessage: 'Исчерпана квота Google API. Повторите позже.',
+      });
+    }
+    if (byReason === 'RATE_LIMITED') {
+      return new GoogleApiError({
+        code: 'RATE_LIMITED',
+        status: 403,
+        retryable: true,
+        safeMessage: 'Слишком много запросов к Google. Повторите позже.',
+      });
+    }
+    if (byReason === 'INSUFFICIENT_SCOPE' || mentionsInsufficientScopeText(bodyText)) {
       return new GoogleApiError({
         code: 'INSUFFICIENT_SCOPE',
         status: 403,
@@ -151,7 +225,8 @@ export function classifyGoogleHttpError(input: {
   }
 
   if (input.status === 429) {
-    if (mentionsQuotaExceeded(bodyText)) {
+    const byReason = classifyByReasons(reasons);
+    if (byReason === 'QUOTA_EXCEEDED') {
       return new GoogleApiError({
         code: 'QUOTA_EXCEEDED',
         status: 429,
@@ -185,11 +260,10 @@ export function classifyGoogleHttpError(input: {
 }
 
 export function classifyNetworkError(error: unknown): GoogleApiError {
-  const message = error instanceof Error ? safeSnippet(error.message) : 'Сетевая ошибка';
   return new GoogleApiError({
     code: 'NETWORK',
     retryable: true,
-    safeMessage: message ? `Сетевая ошибка при обращении к Google` : 'Сетевая ошибка при обращении к Google',
+    safeMessage: 'Сетевая ошибка при обращении к Google',
   });
 }
 

@@ -48,10 +48,10 @@ describe('Google error classification', () => {
     assert.equal(connectionStatusFromError(error), 'REAUTH_REQUIRED');
   });
 
-  it('classifies API 403 as FORBIDDEN', () => {
+  it('classifies API 403 as FORBIDDEN for real access denial', () => {
     const error = classifyGoogleHttpError({
       status: 403,
-      bodyText: '{"error":{"message":"User does not have sufficient permission"}}',
+      bodyText: '{"error":{"code":403,"message":"Caller does not have permission"}}',
       context: 'api',
     });
     assert.equal(error.code, 'FORBIDDEN');
@@ -67,6 +67,81 @@ describe('Google error classification', () => {
     });
     assert.equal(error.code, 'INSUFFICIENT_SCOPE');
     assert.equal(connectionStatusFromError(error), 'ERROR');
+  });
+
+  it('classifies 403 insufficientPermissions reason as INSUFFICIENT_SCOPE', () => {
+    const error = classifyGoogleHttpError({
+      status: 403,
+      bodyText: JSON.stringify({
+        error: {
+          code: 403,
+          errors: [{ reason: 'insufficientPermissions', message: 'Insufficient Permission' }],
+        },
+      }),
+      context: 'api',
+    });
+    assert.equal(error.code, 'INSUFFICIENT_SCOPE');
+    assert.equal(error.retryable, false);
+  });
+
+  for (const reason of [
+    'dailyLimitExceeded',
+    'dailyLimitExceededUnreg',
+    'quotaExceeded',
+    'limitExceeded',
+    'servingLimitExceeded',
+    'variableTermExpiredDailyExceeded',
+    'variableTermLimitExceeded',
+  ]) {
+    it(`classifies 403 reason ${reason} as QUOTA_EXCEEDED retryable`, () => {
+      const error = classifyGoogleHttpError({
+        status: 403,
+        bodyText: JSON.stringify({
+          error: { code: 403, errors: [{ reason }], message: reason },
+        }),
+        context: 'api',
+      });
+      assert.equal(error.code, 'QUOTA_EXCEEDED');
+      assert.equal(error.retryable, true);
+      assert.equal(connectionStatusFromError(error), 'ERROR');
+      assert.equal(error.safeMessage.includes(reason), false);
+    });
+  }
+
+  for (const reason of [
+    'rateLimitExceeded',
+    'rateLimitExceededUnreg',
+    'userRateLimitExceeded',
+    'userRateLimitExceededUnreg',
+  ]) {
+    it(`classifies 403 reason ${reason} as RATE_LIMITED retryable`, () => {
+      const error = classifyGoogleHttpError({
+        status: 403,
+        bodyText: JSON.stringify({
+          error: { code: 403, errors: [{ reason }], message: reason },
+        }),
+        context: 'api',
+      });
+      assert.equal(error.code, 'RATE_LIMITED');
+      assert.equal(error.retryable, true);
+      assert.notEqual(connectionStatusFromError(error), 'REVOKED');
+    });
+  }
+
+  it('does not treat substring scope alone as insufficient scope on 403', () => {
+    const error = classifyGoogleHttpError({
+      status: 403,
+      bodyText: JSON.stringify({
+        error: {
+          code: 403,
+          message: "This property is outside the caller's scope of management",
+        },
+      }),
+      context: 'api',
+    });
+    // message has "scope" but not insufficient+scope pair in the required sense —
+    // mentionsInsufficientScopeText requires both insufficient and scope.
+    assert.equal(error.code, 'FORBIDDEN');
   });
 
   it('classifies 429 rate limit as RATE_LIMITED retryable', () => {
