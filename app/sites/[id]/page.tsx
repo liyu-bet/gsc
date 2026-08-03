@@ -3,6 +3,8 @@ import { notFound } from 'next/navigation';
 import { requireAdmin } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { querySite, SearchAnalyticsResponse, SearchAnalyticsRow } from '@/lib/google';
+import { GoogleApiError } from '@/lib/google-errors';
+import { isBlockedConnectionStatus } from '@/lib/connection-status';
 import { countryName } from '@/lib/countries';
 import {
   buildComparisonRange,
@@ -105,7 +107,10 @@ async function safeQuery(
   } catch (error) {
     return {
       rows: [],
-      error: error instanceof Error ? error.message : 'Неизвестная ошибка API',
+      error:
+        error instanceof GoogleApiError
+          ? error.safeMessage
+          : 'Неизвестная ошибка API',
       responseAggregationType: null,
       firstIncompleteDate: null,
       firstIncompleteHour: null,
@@ -350,6 +355,11 @@ export default async function SiteDetailPage({
 
   if (!property) notFound();
 
+  const connectionBlocked = isBlockedConnectionStatus(property.connection.status);
+  const blockedMessage =
+    property.connection.lastErrorMessage ||
+    'Аккаунт Google недоступен — переподключите, чтобы обновить метрики';
+
   const baseParams: SiteSearchParams = {
     period: period.id,
     searchType,
@@ -406,7 +416,9 @@ export default async function SiteDetailPage({
   let apiDimensions: string[] = ['date'];
   let apiDataState = 'all';
 
-  if (period.mode === 'hourly') {
+  if (connectionBlocked) {
+    errors.push(blockedMessage);
+  } else if (period.mode === 'hourly') {
     chartMode = 'hourly';
     hideQueryCounting = true;
     const span = hourlyFetchDateSpan(fetchedAt, 72);

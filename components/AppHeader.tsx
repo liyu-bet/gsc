@@ -1,11 +1,4 @@
-import { ConnectedAccountsControl } from '@/components/ConnectedAccountsControl';
-
-type ConnectionItem = {
-  id: string;
-  email: string;
-  name: string | null;
-  propertiesCount: number;
-};
+import { ConnectedAccountsControl, type ConnectionItem } from '@/components/ConnectedAccountsControl';
 
 type AppHeaderProps = {
   compact?: boolean;

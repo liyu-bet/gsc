@@ -6,7 +6,19 @@ import {
   saveOrUpdateConnection,
   syncSitesForConnection,
 } from '@/lib/google';
+import { GoogleApiError } from '@/lib/google-errors';
+import {
+  GOOGLE_OAUTH_STATE_COOKIE,
+  oauthStateErrorMessage,
+  parseGoogleOAuthStateCookie,
+} from '@/lib/google-oauth-state';
 import { appUrl } from '@/lib/urls';
+
+function safeRedirectError(message: string) {
+  return NextResponse.redirect(
+    appUrl(`/dashboard?google_error=${encodeURIComponent(message)}`)
+  );
+}
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
@@ -15,33 +27,45 @@ export async function GET(request: NextRequest) {
   const error = url.searchParams.get('error');
 
   if (error) {
-    return NextResponse.redirect(
-      appUrl(`/dashboard?google_error=${encodeURIComponent(error)}`)
-    );
+    return safeRedirectError('Авторизация Google отменена или отклонена');
   }
 
   const cookieStore = await cookies();
-  const storedState = cookieStore.get('google_oauth_state')?.value;
+  const storedState = cookieStore.get(GOOGLE_OAUTH_STATE_COOKIE)?.value;
+  const parsed = parseGoogleOAuthStateCookie(storedState, state);
 
-  if (!code || !state || !storedState || state !== storedState) {
-    return NextResponse.redirect(
-      appUrl('/dashboard?google_error=' + encodeURIComponent('Неверный OAuth state'))
-    );
+  if (!parsed.ok) {
+    const response = safeRedirectError(oauthStateErrorMessage(parsed.reason));
+    response.cookies.delete(GOOGLE_OAUTH_STATE_COOKIE);
+    return response;
+  }
+
+  if (!code) {
+    const response = safeRedirectError('Отсутствует код авторизации Google');
+    response.cookies.delete(GOOGLE_OAUTH_STATE_COOKIE);
+    return response;
   }
 
   try {
     const tokens = await exchangeCodeForTokens(code);
     const user = await fetchGoogleUserInfo(tokens.access_token);
-    const connection = await saveOrUpdateConnection({ tokens, user });
+    const connection = await saveOrUpdateConnection({
+      tokens,
+      user,
+      reconnectConnectionId: parsed.payload.connectionId,
+    });
     await syncSitesForConnection(connection.id);
 
     const response = NextResponse.redirect(appUrl('/dashboard'));
-    response.cookies.delete('google_oauth_state');
+    response.cookies.delete(GOOGLE_OAUTH_STATE_COOKIE);
     return response;
   } catch (e) {
-    const message = e instanceof Error ? e.message : 'Ошибка callback Google OAuth';
-    return NextResponse.redirect(
-      appUrl(`/dashboard?google_error=${encodeURIComponent(message)}`)
-    );
+    const message =
+      e instanceof GoogleApiError
+        ? e.safeMessage
+        : 'Ошибка callback Google OAuth';
+    const response = safeRedirectError(message);
+    response.cookies.delete(GOOGLE_OAUTH_STATE_COOKIE);
+    return response;
   }
 }

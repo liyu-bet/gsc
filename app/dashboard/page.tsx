@@ -2,6 +2,8 @@ import { unstable_cache } from 'next/cache';
 import { requireAdmin } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { querySite } from '@/lib/google';
+import { GoogleApiError } from '@/lib/google-errors';
+import { isBlockedConnectionStatus } from '@/lib/connection-status';
 import {
   buildComparisonRange,
   enumerateDates,
@@ -181,6 +183,9 @@ export default async function DashboardPage({
         siteUrl: property.siteUrl,
         connectionId: connection.id,
         connectionEmail: connection.email,
+        connectionStatus: connection.status,
+        connectionBlocked: isBlockedConnectionStatus(connection.status),
+        connectionErrorMessage: connection.lastErrorMessage,
       }))
   );
 
@@ -201,6 +206,16 @@ export default async function DashboardPage({
   if (period.mode === 'hourly') {
     const hourlyLoads = await Promise.all(
       filteredProperties.map(async (property) => {
+        if (property.connectionBlocked) {
+          return {
+            property,
+            rows: [] as HourlyMetricRow[],
+            latestAvailableHour: null as string | null,
+            error:
+              property.connectionErrorMessage ||
+              'Аккаунт Google недоступен — переподключите, чтобы обновить метрики',
+          };
+        }
         try {
           const data = await getCachedHourlyRows(
             property.id,
@@ -228,7 +243,7 @@ export default async function DashboardPage({
             property,
             rows: [] as HourlyMetricRow[],
             latestAvailableHour: null as string | null,
-            error: error instanceof Error ? error.message : 'Неизвестная ошибка API',
+            error: safeApiErrorMessage(error),
           };
         }
       })
@@ -303,6 +318,19 @@ export default async function DashboardPage({
   } else {
     siteCards = await Promise.all(
       filteredProperties.map(async (property): Promise<SiteCardData> => {
+        if (property.connectionBlocked) {
+          const length = enumerateDates(dailyRange.startDate, dailyRange.endDate).length;
+          return {
+            ...property,
+            currentSeries: emptySeries(length),
+            previousSeries: emptySeries(length),
+            metrics: emptyMetrics(),
+            rangeLabel: `${dailyRange.startDate} → ${dailyRange.endDate}`,
+            error:
+              property.connectionErrorMessage ||
+              'Аккаунт Google недоступен — переподключите, чтобы обновить метрики',
+          };
+        }
         try {
           const data = await getCachedDailySiteCardData(
             property.id,
@@ -321,7 +349,7 @@ export default async function DashboardPage({
             previousSeries: emptySeries(length),
             metrics: emptyMetrics(),
             rangeLabel: `${dailyRange.startDate} → ${dailyRange.endDate}`,
-            error: error instanceof Error ? error.message : 'Неизвестная ошибка API',
+            error: safeApiErrorMessage(error),
           };
         }
       })
@@ -343,6 +371,12 @@ export default async function DashboardPage({
           email: connection.email,
           name: connection.name,
           propertiesCount: connection.properties.length,
+          status: connection.status,
+          lastErrorCode: connection.lastErrorCode,
+          lastErrorMessage: connection.lastErrorMessage,
+          lastSuccessAt: connection.lastSuccessAt
+            ? connection.lastSuccessAt.toISOString()
+            : null,
         }))}
       />
 
@@ -441,18 +475,36 @@ export default async function DashboardPage({
         ) : (
           <div className="properties-list compact-list sites-scroll-list">
             {selectedProperties.map((property) => (
-              <div className="property-row" key={property.id}>
+              <div
+                className={`property-row${property.connectionBlocked ? ' property-row-disabled' : ''}`}
+                key={property.id}
+              >
                 <div>
                   <div className="property-title">{property.label}</div>
                   <div className="muted small-text">{property.siteUrl}</div>
+                  {property.connectionBlocked ? (
+                    <div className="muted small-text">
+                      {property.connectionErrorMessage ||
+                        'Аккаунт Google недоступен — переподключите для live-метрик'}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="property-actions">
-                  <a
-                    className="button ghost small"
-                    href={`/sites/${property.id}?period=${period.mode === 'hourly' ? '24h' : period.id}&searchType=${searchType}`}
-                  >
-                    Открыть
-                  </a>
+                  {property.connectionBlocked ? (
+                    <a
+                      className="button ghost small"
+                      href={`/api/google/connect?connectionId=${encodeURIComponent(property.connectionId)}`}
+                    >
+                      Переподключить
+                    </a>
+                  ) : (
+                    <a
+                      className="button ghost small"
+                      href={`/sites/${property.id}?period=${period.mode === 'hourly' ? '24h' : period.id}&searchType=${searchType}`}
+                    >
+                      Открыть
+                    </a>
+                  )}
                 </div>
               </div>
             ))}
@@ -470,6 +522,11 @@ function parseVisibleMetrics(value?: string): MetricKey[] {
     .filter((item) => VALID_METRICS.has(item));
 
   return parsed.length ? parsed : DEFAULT_METRICS;
+}
+
+function safeApiErrorMessage(error: unknown): string {
+  if (error instanceof GoogleApiError) return error.safeMessage;
+  return 'Неизвестная ошибка API';
 }
 
 function alignDailyRows(alignedDates: string[], rows: DailyRow[]) {

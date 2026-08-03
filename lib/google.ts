@@ -1,8 +1,19 @@
 import { GoogleConnection } from '@prisma/client';
 import { addMinutes, format, isValid, parseISO, subDays } from 'date-fns';
-import { decrypt, encrypt } from './security';
+import { encrypt } from './security';
 import { env } from './env';
 import { prisma } from './prisma';
+import { googleAuthorizedFetch } from './google-authorized-fetch';
+import {
+  classifyGoogleHttpError,
+  classifyNetworkError,
+  GoogleApiError,
+} from './google-errors';
+import { persistConnectionSuccess } from './connection-health';
+import {
+  assertReconnectGoogleSub,
+  chooseEncryptedRefreshToken,
+} from './google-reconnect';
 
 export type GoogleTokenResponse = {
   access_token: string;
@@ -79,94 +90,81 @@ export async function exchangeCodeForTokens(code: string): Promise<GoogleTokenRe
     grant_type: 'authorization_code',
   });
 
-  const response = await fetch(GOOGLE_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Ошибка обмена токена Google: ${text}`);
+  let response: Response;
+  try {
+    response = await fetch(GOOGLE_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+  } catch (error) {
+    throw classifyNetworkError(error);
   }
 
-  return response.json();
-}
-
-export async function refreshAccessToken(refreshToken: string): Promise<GoogleTokenResponse> {
-  const body = new URLSearchParams({
-    client_id: env.googleClientId,
-    client_secret: env.googleClientSecret,
-    refresh_token: refreshToken,
-    grant_type: 'refresh_token',
-  });
-
-  const response = await fetch(GOOGLE_TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  });
-
+  const text = await response.text();
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Ошибка обновления токена Google: ${text}`);
+    throw classifyGoogleHttpError({
+      status: response.status,
+      bodyText: text,
+      context: 'token_refresh',
+    });
   }
 
-  return response.json();
+  try {
+    return JSON.parse(text) as GoogleTokenResponse;
+  } catch {
+    throw new GoogleApiError({
+      code: 'INVALID_RESPONSE',
+      safeMessage: 'Некорректный ответ при обмене кода Google',
+    });
+  }
 }
 
 export async function fetchGoogleUserInfo(accessToken: string): Promise<GoogleUserInfo> {
-  const response = await fetch(GOOGLE_USERINFO_URL, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    cache: 'no-store',
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Не удалось получить данные пользователя Google: ${text}`);
+  let response: Response;
+  try {
+    response = await fetch(GOOGLE_USERINFO_URL, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: 'no-store',
+    });
+  } catch (error) {
+    throw classifyNetworkError(error);
   }
 
-  return response.json();
+  const text = await response.text();
+  if (!response.ok) {
+    throw classifyGoogleHttpError({
+      status: response.status,
+      bodyText: text,
+      context: 'api',
+    });
+  }
+
+  try {
+    return JSON.parse(text) as GoogleUserInfo;
+  } catch {
+    throw new GoogleApiError({
+      code: 'INVALID_RESPONSE',
+      safeMessage: 'Некорректный ответ userinfo Google',
+    });
+  }
 }
 
-async function getUsableAccessToken(connection: GoogleConnection): Promise<string> {
-  const currentToken = decrypt(connection.encryptedAccess);
-  const expiry = connection.tokenExpiry;
-
-  if (expiry && expiry > addMinutes(new Date(), 2)) {
-    return currentToken;
-  }
-
-  if (!connection.encryptedRefresh) {
-    return currentToken;
-  }
-
-  const refreshed = await refreshAccessToken(decrypt(connection.encryptedRefresh));
-  const updated = await prisma.googleConnection.update({
-    where: { id: connection.id },
-    data: {
-      encryptedAccess: encrypt(refreshed.access_token),
-      tokenExpiry: refreshed.expires_in ? addMinutes(new Date(), Math.floor(refreshed.expires_in / 60)) : null,
-      scope: refreshed.scope || connection.scope,
-    },
+export async function listSearchConsoleSites(connectionId: string): Promise<GscSiteEntry[]> {
+  const response = await googleAuthorizedFetch(connectionId, `${GSC_BASE}/sites`, {
+    method: 'GET',
+    recordSuccess: true,
   });
 
-  return decrypt(updated.encryptedAccess);
-}
-
-export async function listSearchConsoleSites(connection: GoogleConnection): Promise<GscSiteEntry[]> {
-  const accessToken = await getUsableAccessToken(connection);
-  const response = await fetch(`${GSC_BASE}/sites`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    cache: 'no-store',
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Ошибка Search Console sites.list: ${text}`);
+  let data: { siteEntry?: GscSiteEntry[] };
+  try {
+    data = (await response.json()) as { siteEntry?: GscSiteEntry[] };
+  } catch {
+    throw new GoogleApiError({
+      code: 'INVALID_RESPONSE',
+      safeMessage: 'Некорректный ответ Search Console sites.list',
+    });
   }
-
-  const data = (await response.json()) as { siteEntry?: GscSiteEntry[] };
   return data.siteEntry || [];
 }
 
@@ -176,10 +174,13 @@ export async function syncSitesForConnection(connectionId: string): Promise<numb
     include: { properties: true },
   });
   if (!connection) {
-    throw new Error('Подключение не найдено');
+    throw new GoogleApiError({
+      code: 'CONNECTION_NOT_FOUND',
+      safeMessage: 'Подключение не найдено',
+    });
   }
 
-  const sites = await listSearchConsoleSites(connection);
+  const sites = await listSearchConsoleSites(connection.id);
   const liveSiteUrls = new Set(sites.map((site) => site.siteUrl));
 
   await prisma.$transaction([
@@ -212,16 +213,59 @@ export async function syncSitesForConnection(connectionId: string): Promise<numb
     }),
   ]);
 
+  await persistConnectionSuccess(connectionId, { force: true });
   return sites.length;
 }
 
 export async function saveOrUpdateConnection(input: {
   tokens: GoogleTokenResponse;
   user: GoogleUserInfo;
+  /** When reconnecting, only update if googleUserId matches this connection. */
+  reconnectConnectionId?: string | null;
 }): Promise<GoogleConnection> {
   const expiry = input.tokens.expires_in
     ? addMinutes(new Date(), Math.floor(input.tokens.expires_in / 60))
     : null;
+
+  const healthReset = {
+    status: 'ACTIVE' as const,
+    lastErrorCode: null,
+    lastErrorMessage: null,
+    lastErrorAt: null,
+    lastSuccessAt: new Date(),
+  };
+
+  if (input.reconnectConnectionId) {
+    const target = await prisma.googleConnection.findUnique({
+      where: { id: input.reconnectConnectionId },
+    });
+    if (!target) {
+      throw new GoogleApiError({
+        code: 'CONNECTION_NOT_FOUND',
+        safeMessage: 'Подключение не найдено',
+      });
+    }
+    if (target.googleUserId !== input.user.sub) {
+      assertReconnectGoogleSub(target.googleUserId, input.user.sub);
+    }
+
+    return prisma.googleConnection.update({
+      where: { id: target.id },
+      data: {
+        email: input.user.email,
+        name: input.user.name,
+        picture: input.user.picture,
+        encryptedAccess: encrypt(input.tokens.access_token),
+        encryptedRefresh: chooseEncryptedRefreshToken(
+          input.tokens.refresh_token ? encrypt(input.tokens.refresh_token) : null,
+          target.encryptedRefresh
+        ),
+        tokenExpiry: expiry,
+        scope: input.tokens.scope,
+        ...healthReset,
+      },
+    });
+  }
 
   const existing = await prisma.googleConnection.findUnique({
     where: { googleUserId: input.user.sub },
@@ -235,11 +279,13 @@ export async function saveOrUpdateConnection(input: {
         name: input.user.name,
         picture: input.user.picture,
         encryptedAccess: encrypt(input.tokens.access_token),
-        encryptedRefresh: input.tokens.refresh_token
-          ? encrypt(input.tokens.refresh_token)
-          : existing.encryptedRefresh,
+        encryptedRefresh: chooseEncryptedRefreshToken(
+          input.tokens.refresh_token ? encrypt(input.tokens.refresh_token) : null,
+          existing.encryptedRefresh
+        ),
         tokenExpiry: expiry,
         scope: input.tokens.scope,
+        ...healthReset,
       },
     });
   }
@@ -254,6 +300,7 @@ export async function saveOrUpdateConnection(input: {
       encryptedRefresh: input.tokens.refresh_token ? encrypt(input.tokens.refresh_token) : null,
       tokenExpiry: expiry,
       scope: input.tokens.scope,
+      ...healthReset,
     },
   });
 }
@@ -264,31 +311,26 @@ export async function querySite(
   body: Record<string, unknown>,
   options?: { signal?: AbortSignal }
 ) {
-  const connection = await prisma.googleConnection.findUnique({ where: { id: connectionId } });
-  if (!connection) {
-    throw new Error('Подключение не найдено');
-  }
-
-  const accessToken = await getUsableAccessToken(connection);
   const encodedSiteUrl = encodeURIComponent(siteUrl);
+  const response = await googleAuthorizedFetch(
+    connectionId,
+    `${GSC_BASE}/sites/${encodedSiteUrl}/searchAnalytics/query`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: options?.signal,
+    }
+  );
 
-  const response = await fetch(`${GSC_BASE}/sites/${encodedSiteUrl}/searchAnalytics/query`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-    cache: 'no-store',
-    body: JSON.stringify(body),
-    signal: options?.signal,
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Ошибка запроса Search Analytics: ${text}`);
+  try {
+    return (await response.json()) as SearchAnalyticsResponse;
+  } catch {
+    throw new GoogleApiError({
+      code: 'INVALID_RESPONSE',
+      safeMessage: 'Некорректный ответ Search Analytics',
+    });
   }
-
-  return response.json() as Promise<SearchAnalyticsResponse>;
 }
 
 export function defaultDateRange(days = 28, endDateInput?: string): {
@@ -325,5 +367,44 @@ export function deriveSiteLabel(siteUrl: string): string {
     return url.hostname;
   } catch {
     return siteUrl;
+  }
+}
+
+/** @deprecated Prefer googleAuthorizedFetch — kept only for rare direct callers. */
+export async function refreshAccessToken(refreshToken: string): Promise<GoogleTokenResponse> {
+  const body = new URLSearchParams({
+    client_id: env.googleClientId,
+    client_secret: env.googleClientSecret,
+    refresh_token: refreshToken,
+    grant_type: 'refresh_token',
+  });
+
+  let response: Response;
+  try {
+    response = await fetch(GOOGLE_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+  } catch (error) {
+    throw classifyNetworkError(error);
+  }
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw classifyGoogleHttpError({
+      status: response.status,
+      bodyText: text,
+      context: 'token_refresh',
+    });
+  }
+
+  try {
+    return JSON.parse(text) as GoogleTokenResponse;
+  } catch {
+    throw new GoogleApiError({
+      code: 'INVALID_RESPONSE',
+      safeMessage: 'Некорректный ответ при обновлении токена Google',
+    });
   }
 }

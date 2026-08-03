@@ -150,6 +150,33 @@ describe('LOW integration serializers', () => {
     assert.equal(JSON.stringify(item).includes('encryptedRefresh'), false);
     assert.equal(JSON.stringify(item).includes('GOOGLE_CLIENT_SECRET'), false);
   });
+
+  it('does not serialize Google connection health fields', () => {
+    const item = serializeLowProperty({
+      id: 'prop_1',
+      siteUrl: 'https://example.com/',
+      permissionLevel: 'siteFullUser',
+      label: 'example.com',
+      isSelected: true,
+      createdAt: new Date('2024-06-01T12:00:00.000Z'),
+      updatedAt: new Date('2024-06-02T12:00:00.000Z'),
+      connection: {
+        id: 'conn_1',
+        email: 'account@example.com',
+        name: 'Account',
+      },
+    });
+    const keys = collectJsonKeys(item);
+    for (const key of [
+      'status',
+      'lastErrorCode',
+      'lastErrorMessage',
+      'lastErrorAt',
+      'lastSuccessAt',
+    ]) {
+      assert.equal(keys.has(key), false, `LOW contract must not expose ${key}`);
+    }
+  });
 });
 
 describe('LOW integration lifecycle dates', () => {
