@@ -886,6 +886,9 @@ export default async function SiteDetailPage({
             <p className="muted">Подключённый аккаунт Google: {property.connection.email}</p>
           </div>
           <div className="header-actions">
+            <Link className="button ghost small" href={`/sites/${id}/sitemaps`} prefetch>
+              Карты сайта
+            </Link>
             <Link
               className="button ghost small"
               href={`/dashboard?period=${period.id === 'custom' ? '28d' : period.id}&searchType=${searchType}`}

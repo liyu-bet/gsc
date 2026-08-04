@@ -10,7 +10,7 @@
     "postinstall": "prisma generate",
     "migrate": "prisma migrate deploy",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx --test lib/**/*.test.ts app/api/integrations/low/**/*.test.ts"
+    "test": "tsx --test lib/**/*.test.ts app/api/**/*.test.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

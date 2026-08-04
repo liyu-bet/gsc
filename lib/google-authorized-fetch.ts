@@ -7,15 +7,23 @@ import {
   connectionNotFoundError,
   GoogleApiError,
   reauthRequiredError,
-  type GoogleApiErrorCode,
 } from './google-errors';
 import { isBlockedConnectionStatus } from './connection-status';
 import {
   safePersistConnectionError,
   safePersistConnectionSuccess,
 } from './connection-health';
+import {
+  shouldPersistConnectionHealthError,
+  type GoogleHealthMode,
+} from './google-health-mode';
 import { decrypt, encrypt } from './security';
 import { prisma } from './prisma';
+
+export {
+  shouldPersistConnectionHealthError,
+  type GoogleHealthMode,
+} from './google-health-mode';
 
 type GoogleTokenResponse = {
   access_token: string;
@@ -28,36 +36,15 @@ type GoogleTokenResponse = {
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
-/**
- * Account-wide failures should update GoogleConnection health.
- * Per-property Search Analytics 403/FORBIDDEN must not paint the whole account ERROR.
- */
-const ACCOUNT_LEVEL_ERROR_CODES = new Set<GoogleApiErrorCode>([
-  'INVALID_GRANT',
-  'UNAUTHORIZED',
-  'REAUTH_REQUIRED',
-  'INSUFFICIENT_SCOPE',
-  'QUOTA_EXCEEDED',
-  'RATE_LIMITED',
-]);
-
-export function shouldPersistConnectionHealthError(
-  error: GoogleApiError,
-  healthMode: 'account' | 'property'
-): boolean {
-  if (healthMode === 'account') return true;
-  return ACCOUNT_LEVEL_ERROR_CODES.has(error.code);
-}
-
 export type GoogleAuthorizedFetchOptions = RequestInit & {
   /** When true, always persist success (sites.list / retry). Default: throttled. */
   recordSuccess?: boolean;
   /**
    * account (default): any Google API error updates connection health.
-   * property: only account-level errors (auth/quota) update connection health —
-   * used by Search Analytics so one inaccessible site does not mark the account ERROR.
+   * property: Search Analytics — auth/quota (+ INSUFFICIENT_SCOPE) only.
+   * property-write: Sitemap list/submit — auth/quota only (not INSUFFICIENT_SCOPE).
    */
-  healthMode?: 'account' | 'property';
+  healthMode?: GoogleHealthMode;
 };
 
 async function refreshAccessTokenRaw(refreshToken: string): Promise<GoogleTokenResponse> {

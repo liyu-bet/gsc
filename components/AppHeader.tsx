@@ -17,6 +17,9 @@ export function AppHeader({ compact = false, connections = [] }: AppHeaderProps)
         </p>
       </div>
       <div className="header-actions">
+        <a className="button ghost" href="/sitemaps">
+          Карты сайта
+        </a>
         <a className="button" href="/api/google/connect">
           Подключить аккаунт Google
         </a>

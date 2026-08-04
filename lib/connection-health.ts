@@ -9,6 +9,14 @@ import {
   publicConnectionStatusLabel,
 } from './connection-status';
 import { getGoogleScopeCapabilities } from './google-scopes';
+import {
+  shouldPersistConnectionHealthError,
+  type GoogleHealthMode,
+} from './google-health-mode';
+
+export type GoogleJsonParseOptions = {
+  healthMode?: GoogleHealthMode;
+};
 
 export { isBlockedConnectionStatus, publicConnectionStatusLabel };
 export const SUCCESS_WRITE_THROTTLE_MS = 5 * 60 * 1000;
@@ -138,36 +146,40 @@ export async function safePersistConnectionSuccess(
 }
 
 /**
- * Parse Google JSON body; on failure persist INVALID_RESPONSE and rethrow.
+ * Parse Google JSON body; on failure throw INVALID_RESPONSE.
+ * Persistence follows healthMode (default account — preserves sites.list behavior).
  */
 export async function parseGoogleJsonResponse<T>(
   connectionId: string,
   response: Response,
-  safeMessage: string
+  safeMessage: string,
+  options?: GoogleJsonParseOptions
 ): Promise<T> {
-  let text: string;
-  try {
-    text = await response.text();
-  } catch {
+  const healthMode = options?.healthMode ?? 'account';
+
+  async function failParse(): Promise<never> {
     const error = new GoogleApiError({
       code: 'INVALID_RESPONSE',
       safeMessage,
       retryable: false,
     });
-    await safePersistConnectionError(connectionId, error);
+    if (shouldPersistConnectionHealthError(error, healthMode)) {
+      await safePersistConnectionError(connectionId, error);
+    }
     throw error;
+  }
+
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    return failParse();
   }
 
   try {
     return JSON.parse(text) as T;
   } catch {
-    const error = new GoogleApiError({
-      code: 'INVALID_RESPONSE',
-      safeMessage,
-      retryable: false,
-    });
-    await safePersistConnectionError(connectionId, error);
-    throw error;
+    return failParse();
   }
 }
 

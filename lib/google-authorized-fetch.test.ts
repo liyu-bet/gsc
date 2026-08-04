@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { GoogleApiError } from './google-errors';
-import { shouldPersistConnectionHealthError } from './google-authorized-fetch';
+import { shouldPersistConnectionHealthError } from './google-health-mode';
 
 describe('connection health persistence modes', () => {
   it('property mode ignores FORBIDDEN so one site cannot paint the account ERROR', () => {
@@ -51,5 +51,48 @@ describe('connection health persistence modes', () => {
       ),
       false
     );
+  });
+
+  it('property-write mode does not persist INSUFFICIENT_SCOPE or FORBIDDEN', () => {
+    assert.equal(
+      shouldPersistConnectionHealthError(
+        new GoogleApiError({ code: 'INSUFFICIENT_SCOPE', safeMessage: 'x' }),
+        'property-write'
+      ),
+      false
+    );
+    assert.equal(
+      shouldPersistConnectionHealthError(
+        new GoogleApiError({ code: 'FORBIDDEN', safeMessage: 'x' }),
+        'property-write'
+      ),
+      false
+    );
+    assert.equal(
+      shouldPersistConnectionHealthError(
+        new GoogleApiError({ code: 'NETWORK', safeMessage: 'x', retryable: true }),
+        'property-write'
+      ),
+      false
+    );
+  });
+
+  it('property-write mode still persists auth and quota errors', () => {
+    for (const code of [
+      'INVALID_GRANT',
+      'UNAUTHORIZED',
+      'REAUTH_REQUIRED',
+      'QUOTA_EXCEEDED',
+      'RATE_LIMITED',
+    ] as const) {
+      assert.equal(
+        shouldPersistConnectionHealthError(
+          new GoogleApiError({ code, safeMessage: 'x' }),
+          'property-write'
+        ),
+        true,
+        code
+      );
+    }
   });
 });
