@@ -324,6 +324,8 @@ export async function querySite(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       signal: options?.signal,
+      // Per-site analytics must not mark the whole Google account ERROR on FORBIDDEN.
+      healthMode: 'property',
     }
   );
 

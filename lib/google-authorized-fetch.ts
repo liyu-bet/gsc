@@ -7,6 +7,7 @@ import {
   connectionNotFoundError,
   GoogleApiError,
   reauthRequiredError,
+  type GoogleApiErrorCode,
 } from './google-errors';
 import { isBlockedConnectionStatus } from './connection-status';
 import {
@@ -27,9 +28,36 @@ type GoogleTokenResponse = {
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
+/**
+ * Account-wide failures should update GoogleConnection health.
+ * Per-property Search Analytics 403/FORBIDDEN must not paint the whole account ERROR.
+ */
+const ACCOUNT_LEVEL_ERROR_CODES = new Set<GoogleApiErrorCode>([
+  'INVALID_GRANT',
+  'UNAUTHORIZED',
+  'REAUTH_REQUIRED',
+  'INSUFFICIENT_SCOPE',
+  'QUOTA_EXCEEDED',
+  'RATE_LIMITED',
+]);
+
+export function shouldPersistConnectionHealthError(
+  error: GoogleApiError,
+  healthMode: 'account' | 'property'
+): boolean {
+  if (healthMode === 'account') return true;
+  return ACCOUNT_LEVEL_ERROR_CODES.has(error.code);
+}
+
 export type GoogleAuthorizedFetchOptions = RequestInit & {
   /** When true, always persist success (sites.list / retry). Default: throttled. */
   recordSuccess?: boolean;
+  /**
+   * account (default): any Google API error updates connection health.
+   * property: only account-level errors (auth/quota) update connection health —
+   * used by Search Analytics so one inaccessible site does not mark the account ERROR.
+   */
+  healthMode?: 'account' | 'property';
 };
 
 async function refreshAccessTokenRaw(refreshToken: string): Promise<GoogleTokenResponse> {
@@ -119,7 +147,7 @@ export async function googleAuthorizedFetch(
   input: string | URL,
   init?: GoogleAuthorizedFetchOptions
 ): Promise<Response> {
-  const { recordSuccess, ...requestInit } = init || {};
+  const { recordSuccess, healthMode = 'account', ...requestInit } = init || {};
 
   const connection = await prisma.googleConnection.findUnique({
     where: { id: connectionId },
@@ -146,6 +174,7 @@ export async function googleAuthorizedFetch(
     refreshed = tokenResult.refreshed;
     liveConnection = tokenResult.connection;
   } catch (error) {
+    // Token refresh failures are always account-level.
     if (error instanceof GoogleApiError) {
       await safePersistConnectionError(connectionId, error);
     }
@@ -164,7 +193,9 @@ export async function googleAuthorizedFetch(
     });
   } catch (error) {
     const classified = classifyNetworkError(error);
-    await safePersistConnectionError(connectionId, classified);
+    if (shouldPersistConnectionHealthError(classified, healthMode)) {
+      await safePersistConnectionError(connectionId, classified);
+    }
     throw classified;
   }
 
@@ -175,7 +206,9 @@ export async function googleAuthorizedFetch(
       bodyText,
       context: 'api',
     });
-    await safePersistConnectionError(connectionId, classified);
+    if (shouldPersistConnectionHealthError(classified, healthMode)) {
+      await safePersistConnectionError(connectionId, classified);
+    }
     throw classified;
   }
 
