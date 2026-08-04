@@ -328,6 +328,7 @@ Google OAuth access/refresh tokens, client secret, encryption keys, admin passwo
 | `GET` | `/api/integrations/low/health` | Liveness for the integration surface |
 | `GET` | `/api/integrations/low/properties` | Paginated GSC properties for sync |
 | `GET` | `/api/integrations/low/properties/:id/lifecycle` | Earliest available impression/click dates |
+| `GET` | `/api/integrations/low/properties/:id/performance?window=latest_day` | Impression/click totals for the latest available day |
 
 ### Properties query params
 
@@ -360,6 +361,44 @@ Dates are always `null` or inside the executed `[searchedFrom, searchedTo]` rang
 - `dateMeaning: earliest_available_in_search_console_api` — earliest date among rows returned by the current Search Console API lookback, **not** a guaranteed first-ever historical date for the property
 - `searchedFrom` / `searchedTo` — calendar range that was actually queried (may be shorter than the configured lookback when both dates are found early)
 
+### Property performance
+
+```
+GET /api/integrations/low/properties/:id/performance?window=latest_day
+```
+
+`window` is optional and defaults to `latest_day`. Any other value returns `400`. A rolling 24-hour window is **not** supported — Search Console does not expose hourly data through this API.
+
+Response:
+
+```json
+{
+  "propertyId": "prop_1",
+  "siteUrl": "sc-domain:example.com",
+  "period": "latest_available_day",
+  "periodStart": "2026-08-02",
+  "periodEnd": "2026-08-02",
+  "dataDate": "2026-08-02",
+  "impressions": 840,
+  "clicks": 12,
+  "generatedAt": "2026-08-04T10:00:00.000Z"
+}
+```
+
+Semantics:
+
+- `period: latest_available_day` — totals cover **one full Search Console calendar day**, the latest day Google normally has finalised data for (typically today − 2 days). This is **not** a rolling last-24-hours figure, and it is not "today".
+- `periodStart` / `periodEnd` / `dataDate` are the same calendar date, in `YYYY-MM-DD`.
+- Totals are summed over the finalised (`dataState: final`) Search Analytics rows for that single day. A property with no rows for the day returns `0` / `0` rather than an error.
+- Unknown property → `404`. Upstream Search Console failure or timeout → `502`.
+
+### Performance curl example
+
+```bash
+curl -sS -H "Authorization: Bearer YOUR_GSC_LOW_API_TOKEN" \
+  "http://localhost:3000/api/integrations/low/properties/PROPERTY_ID/performance?window=latest_day"
+```
+
 ### Forbidden response fields
 
 Never returned: `encryptedAccess`, `encryptedRefresh`, access/refresh tokens, `tokenExpiry`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`, `ENCRYPTION_KEY`, `ADMIN_PASSWORD`, `DATABASE_URL`, or the `Authorization` header value.
@@ -375,6 +414,9 @@ curl -sS -H "Authorization: Bearer YOUR_GSC_LOW_API_TOKEN" \
 
 curl -sS -H "Authorization: Bearer YOUR_GSC_LOW_API_TOKEN" \
   "http://localhost:3000/api/integrations/low/properties/PROPERTY_ID/lifecycle"
+
+curl -sS -H "Authorization: Bearer YOUR_GSC_LOW_API_TOKEN" \
+  "http://localhost:3000/api/integrations/low/properties/PROPERTY_ID/performance?window=latest_day"
 ```
 
 ### Env
@@ -384,7 +426,10 @@ GSC_LOW_API_TOKEN=replace-with-a-long-random-token
 GSC_LIFECYCLE_LOOKBACK_DAYS=488
 GSC_LIFECYCLE_WINDOW_DAYS=90
 GSC_LIFECYCLE_TIMEOUT_MS=60000
+GSC_PERFORMANCE_TIMEOUT_MS=60000
 ```
+
+`GSC_PERFORMANCE_TIMEOUT_MS` is optional (default `60000`). Values outside `1000`–`300000` or non-integers fall back to the default.
 
 Store the real token only in `.env` or deployment secrets. Never use `NEXT_PUBLIC_` for this value.
 

@@ -38,6 +38,19 @@ export type LowLifecycleResponse = {
   generatedAt: string;
 };
 
+/** Totals for the latest available Search Console calendar day (not rolling 24h). */
+export type LowPerformanceResponse = {
+  propertyId: string;
+  siteUrl: string;
+  period: 'latest_available_day';
+  periodStart: string;
+  periodEnd: string;
+  dataDate: string | null;
+  impressions: number;
+  clicks: number;
+  generatedAt: string;
+};
+
 /** Keys that must never appear in LOW API JSON payloads. */
 export const LOW_FORBIDDEN_RESPONSE_KEYS = [
   'encryptedAccess',
