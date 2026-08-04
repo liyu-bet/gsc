@@ -9,6 +9,7 @@
     "lint": "next lint",
     "postinstall": "prisma generate",
     "migrate": "prisma migrate deploy",
+    "clean": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "tsx --test lib/**/*.test.ts app/api/**/*.test.ts"
   },

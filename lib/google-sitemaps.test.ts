@@ -52,11 +52,16 @@ describe('google-sitemaps source contracts', () => {
     assert.doesNotMatch(source, /listSitemaps[\s\S]*body:/);
   });
 
-  it('submit uses PUT, assertCanManageSitemaps, and does not parse JSON body', () => {
+  it('submit uses PUT, write guard, and does not parse JSON body', () => {
     assert.match(source, /method:\s*'PUT'/);
-    assert.match(source, /assertCanManageSitemaps\(connection\.scope\)/);
+    assert.match(source, /assertConnectionReadyForSitemapWrite/);
     assert.doesNotMatch(source, /submitSitemap[\s\S]*parseGoogleJsonResponse/);
     assert.doesNotMatch(source, /submitSitemap[\s\S]*body:\s*/);
+  });
+
+  it('list rejects invalid sitemapIndex before Google fetch via validation error', () => {
+    assert.match(source, /SitemapValidationError/);
+    assert.match(source, /assertConnectionReadyForSitemapList/);
   });
 
   it('documents expected scopes for guards', () => {

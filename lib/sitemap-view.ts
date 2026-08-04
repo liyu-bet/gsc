@@ -9,13 +9,10 @@ export type SitemapViewModel = {
   isSitemapsIndex: boolean;
   lastSubmitted: string | null;
   lastDownloaded: string | null;
-  lastSubmittedLabel: string;
-  lastDownloadedLabel: string;
-  warnings: number;
-  errors: number;
   warningsLabel: string;
   errorsLabel: string;
-  submittedUrlCount: number;
+  warningsGreaterThanZero: boolean;
+  errorsGreaterThanZero: boolean;
   submittedUrlCountLabel: string;
   status: SitemapUiStatus;
   statusLabel: string;
@@ -28,24 +25,45 @@ const STATUS_RANK: Record<SitemapUiStatus, number> = {
   success: 3,
 };
 
-function toSafeNumber(value: string | number | null | undefined): number {
-  if (value == null || value === '') return 0;
+/** Parse Google int64-like counts without losing precision for large integers. */
+export function parseInt64Count(value: string | number | null | undefined): bigint {
+  if (value == null || value === '') return 0n;
   if (typeof value === 'number') {
-    return Number.isFinite(value) && value >= 0 ? value : 0;
+    if (!Number.isFinite(value) || value < 0 || !Number.isInteger(value)) return 0n;
+    if (!Number.isSafeInteger(value)) return 0n;
+    return BigInt(value);
   }
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
-}
-
-function formatCount(value: number): string {
-  if (!Number.isFinite(value) || value < 0) return '0';
+  const trimmed = String(value).trim();
+  if (!/^\d+$/.test(trimmed)) return 0n;
   try {
-    return new Intl.NumberFormat('ru-RU').format(value);
+    return BigInt(trimmed);
   } catch {
-    return String(Math.trunc(value));
+    return 0n;
   }
 }
 
+export function formatBigIntCount(value: bigint): string {
+  if (value < 0n) return '0';
+  const asString = value.toString();
+  try {
+    // Intl may lose precision for unsafe integers — format digit groups manually for large values.
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+      return asString.replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+    }
+    return new Intl.NumberFormat('ru-RU').format(Number(value));
+  } catch {
+    return asString;
+  }
+}
+
+export function countGreaterThanZero(value: string | number | null | undefined): boolean {
+  return parseInt64Count(value) > 0n;
+}
+
+/**
+ * Format ISO timestamp for display. Pass timeZone for deterministic tests;
+ * omit in browser to use the runtime local zone.
+ */
 export function formatSitemapDate(
   value: string | null | undefined,
   timeZone?: string
@@ -57,7 +75,7 @@ export function formatSitemapDate(
     return new Intl.DateTimeFormat('ru-RU', {
       dateStyle: 'short',
       timeStyle: 'short',
-      timeZone,
+      ...(timeZone ? { timeZone } : {}),
     }).format(date);
   } catch {
     return '—';
@@ -78,37 +96,36 @@ export function sitemapStatusLabel(status: SitemapUiStatus): string {
 }
 
 export function deriveSitemapStatus(input: {
-  errors: number;
-  warnings: number;
+  errorsGreaterThanZero: boolean;
+  warningsGreaterThanZero: boolean;
   isPending: boolean;
 }): SitemapUiStatus {
-  if (input.errors > 0) return 'error';
+  if (input.errorsGreaterThanZero) return 'error';
   if (input.isPending) return 'pending';
-  if (input.warnings > 0) return 'warning';
+  if (input.warningsGreaterThanZero) return 'warning';
   return 'success';
 }
 
-export function sumSubmittedUrls(
-  contents: GoogleSitemapResource['contents']
-): number {
-  if (!Array.isArray(contents)) return 0;
-  let total = 0;
+export function sumSubmittedUrls(contents: GoogleSitemapResource['contents']): bigint {
+  if (!Array.isArray(contents)) return 0n;
+  let total = 0n;
   for (const item of contents) {
     // contents[].indexed is deprecated — ignore intentionally.
-    total += toSafeNumber(item?.submitted);
+    total += parseInt64Count(item?.submitted);
   }
   return total;
 }
 
-export function toSitemapViewModel(
-  resource: GoogleSitemapResource,
-  options?: { timeZone?: string }
-): SitemapViewModel {
-  const warnings = toSafeNumber(resource.warnings);
-  const errors = toSafeNumber(resource.errors);
+export function toSitemapViewModel(resource: GoogleSitemapResource): SitemapViewModel {
+  const warningsGreaterThanZero = countGreaterThanZero(resource.warnings);
+  const errorsGreaterThanZero = countGreaterThanZero(resource.errors);
   const isPending = Boolean(resource.isPending);
-  const submittedUrlCount = sumSubmittedUrls(resource.contents);
-  const status = deriveSitemapStatus({ errors, warnings, isPending });
+  const submitted = sumSubmittedUrls(resource.contents);
+  const status = deriveSitemapStatus({
+    errorsGreaterThanZero,
+    warningsGreaterThanZero,
+    isPending,
+  });
   const path = resource.path?.trim() || '—';
 
   return {
@@ -118,14 +135,11 @@ export function toSitemapViewModel(
     isSitemapsIndex: Boolean(resource.isSitemapsIndex),
     lastSubmitted: resource.lastSubmitted ?? null,
     lastDownloaded: resource.lastDownloaded ?? null,
-    lastSubmittedLabel: formatSitemapDate(resource.lastSubmitted, options?.timeZone),
-    lastDownloadedLabel: formatSitemapDate(resource.lastDownloaded, options?.timeZone),
-    warnings,
-    errors,
-    warningsLabel: formatCount(warnings),
-    errorsLabel: formatCount(errors),
-    submittedUrlCount,
-    submittedUrlCountLabel: formatCount(submittedUrlCount),
+    warningsLabel: formatBigIntCount(parseInt64Count(resource.warnings)),
+    errorsLabel: formatBigIntCount(parseInt64Count(resource.errors)),
+    warningsGreaterThanZero,
+    errorsGreaterThanZero,
+    submittedUrlCountLabel: formatBigIntCount(submitted),
     status,
     statusLabel: sitemapStatusLabel(status),
   };

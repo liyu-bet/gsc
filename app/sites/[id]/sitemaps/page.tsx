@@ -7,7 +7,7 @@ import { SitemapSubmitForm } from '@/components/sitemaps/SitemapSubmitForm';
 import { requireAdmin } from '@/lib/auth';
 import { isBlockedConnectionStatus } from '@/lib/connection-status';
 import { GoogleApiError } from '@/lib/google-errors';
-import { listSitemaps } from '@/lib/google-sitemaps';
+import { listSitemaps, SitemapValidationError } from '@/lib/google-sitemaps';
 import { getGoogleScopeCapabilities } from '@/lib/google-scopes';
 import { prisma } from '@/lib/prisma';
 import { sortSitemapViewModels, toSitemapViewModel } from '@/lib/sitemap-view';
@@ -77,10 +77,14 @@ export default async function PropertySitemapsPage({ params, searchParams }: Pag
       });
       rows = sortSitemapViewModels(resources.map((item) => toSitemapViewModel(item)));
     } catch (error) {
-      listError =
-        error instanceof GoogleApiError
-          ? error.safeMessage
-          : 'Не удалось загрузить список карт сайта';
+      if (error instanceof SitemapValidationError) {
+        listError = error.message;
+      } else {
+        listError =
+          error instanceof GoogleApiError
+            ? error.safeMessage
+            : 'Не удалось загрузить список карт сайта';
+      }
     }
   }
 

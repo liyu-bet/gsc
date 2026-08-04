@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo, useState, useTransition } from 'react';
+import { useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import { createOperationLock } from '@/lib/operation-lock';
 import { resolveSitemapUrl } from '@/lib/sitemap-validation';
 
 type SitemapSubmitFormProps = {
@@ -24,6 +25,7 @@ export function SitemapSubmitForm({
   const [domainScheme, setDomainScheme] = useState<'https' | 'http'>('https');
   const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   const [pending, startTransition] = useTransition();
+  const lockRef = useRef(createOperationLock());
 
   const preview = useMemo(
     () => resolveSitemapUrl(siteUrl, rawInput, { domainScheme }),
@@ -31,11 +33,13 @@ export function SitemapSubmitForm({
   );
 
   const submitDisabled =
-    !canSubmit || pending || !preview.ok || Boolean(disabledReason);
+    !canSubmit || pending || lockRef.current.isLocked() || !preview.ok || Boolean(disabledReason);
 
-  async function onSubmit(event: React.FormEvent) {
+  function onSubmit(event: React.FormEvent) {
     event.preventDefault();
-    if (submitDisabled || !preview.ok) return;
+    if (!canSubmit || !preview.ok || Boolean(disabledReason)) return;
+    if (!lockRef.current.tryAcquire()) return;
+
     setNotice(null);
 
     startTransition(async () => {
@@ -73,6 +77,8 @@ export function SitemapSubmitForm({
           kind: 'error',
           text: 'Не удалось отправить карту сайта',
         });
+      } finally {
+        lockRef.current.release();
       }
     });
   }

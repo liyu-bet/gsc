@@ -9,6 +9,7 @@ export type GoogleApiErrorCode =
   | 'NETWORK'
   | 'INVALID_RESPONSE'
   | 'CONNECTION_NOT_FOUND'
+  | 'CONNECTION_ERROR'
   | 'REAUTH_REQUIRED'
   | 'UNKNOWN';
 

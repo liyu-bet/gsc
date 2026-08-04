@@ -367,7 +367,17 @@ Dates are always `null` or inside the executed `[searchedFrom, searchedTo]` rang
 GET /api/integrations/low/properties/:id/performance?window=latest_day
 ```
 
-`window` is optional and defaults to `latest_day`. Any other value returns `400`. A rolling 24-hour window is **not** supported — Search Console does not expose hourly data through this API.
+`window` is optional and defaults to `latest_day`. Any other value returns `400`.
+
+LOW performance intentionally supports **only** `latest_day`. `rolling_24h` is **not** part of the current LOW contract (the dashboard may still use hourly Search Analytics elsewhere).
+
+Semantics:
+
+- `dataDate` / `periodStart` / `periodEnd` = Pacific (`America/Los_Angeles`) calendar date of the request time, **minus 2 calendar days** (expected finalized lag). This is **not** rolling 24h and **not** the VPS local date.
+- Query body uses `dataState: final`, `aggregationType: byProperty`, `rowLimit: 1`, and empty `dimensions` (property-level totals).
+- Totals are **not** clamped (clicks are not forced ≤ impressions). Invalid numeric fields yield a typed `INVALID_RESPONSE` upstream error mapped to `502`.
+- Zero Search Analytics rows → `clicks=0`, `impressions=0`.
+- Unknown property → `404`. Upstream Search Console failure or timeout → `502`.
 
 Response:
 
@@ -384,13 +394,6 @@ Response:
   "generatedAt": "2026-08-04T10:00:00.000Z"
 }
 ```
-
-Semantics:
-
-- `period: latest_available_day` — totals cover **one full Search Console calendar day**, the latest day Google normally has finalised data for (typically today − 2 days). This is **not** a rolling last-24-hours figure, and it is not "today".
-- `periodStart` / `periodEnd` / `dataDate` are the same calendar date, in `YYYY-MM-DD`.
-- Totals are summed over the finalised (`dataState: final`) Search Analytics rows for that single day. A property with no rows for the day returns `0` / `0` rather than an error.
-- Unknown property → `404`. Upstream Search Console failure or timeout → `502`.
 
 ### Performance curl example
 

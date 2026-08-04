@@ -1,4 +1,5 @@
 import { GoogleApiError, type GoogleApiErrorCode } from './google-errors';
+import { SitemapValidationError } from './google-sitemaps';
 
 export type SitemapRouteErrorBody = {
   ok: false;
@@ -15,6 +16,7 @@ const CODE_TO_STATUS: Partial<Record<GoogleApiErrorCode, number>> = {
   INVALID_GRANT: 409,
   REAUTH_REQUIRED: 409,
   UNAUTHORIZED: 409,
+  CONNECTION_ERROR: 409,
   INSUFFICIENT_SCOPE: 403,
   FORBIDDEN: 403,
   RATE_LIMITED: 429,
@@ -27,6 +29,10 @@ const CODE_TO_STATUS: Partial<Record<GoogleApiErrorCode, number>> = {
 };
 
 export function mapSitemapRouteError(error: unknown): SitemapRouteErrorMapped {
+  if (error instanceof SitemapValidationError) {
+    return validationRouteError(error.message);
+  }
+
   if (error instanceof GoogleApiError) {
     const httpStatus = CODE_TO_STATUS[error.code] ?? 502;
     return {

@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   deriveSitemapStatus,
+  formatBigIntCount,
   formatSitemapDate,
+  parseInt64Count,
   sortSitemapViewModels,
   sumSubmittedUrls,
   toSitemapViewModel,
@@ -11,33 +13,67 @@ import {
 
 describe('sitemap-view', () => {
   it('derives status with correct priority', () => {
-    assert.equal(deriveSitemapStatus({ errors: 1, warnings: 9, isPending: true }), 'error');
-    assert.equal(deriveSitemapStatus({ errors: 0, warnings: 1, isPending: true }), 'pending');
-    assert.equal(deriveSitemapStatus({ errors: 0, warnings: 2, isPending: false }), 'warning');
-    assert.equal(deriveSitemapStatus({ errors: 0, warnings: 0, isPending: false }), 'success');
+    assert.equal(
+      deriveSitemapStatus({
+        errorsGreaterThanZero: true,
+        warningsGreaterThanZero: true,
+        isPending: true,
+      }),
+      'error'
+    );
+    assert.equal(
+      deriveSitemapStatus({
+        errorsGreaterThanZero: false,
+        warningsGreaterThanZero: true,
+        isPending: true,
+      }),
+      'pending'
+    );
+    assert.equal(
+      deriveSitemapStatus({
+        errorsGreaterThanZero: false,
+        warningsGreaterThanZero: true,
+        isPending: false,
+      }),
+      'warning'
+    );
+    assert.equal(
+      deriveSitemapStatus({
+        errorsGreaterThanZero: false,
+        warningsGreaterThanZero: false,
+        isPending: false,
+      }),
+      'success'
+    );
   });
 
-  it('sums submitted counts from string/number and ignores indexed', () => {
+  it('sums submitted counts with BigInt and ignores indexed', () => {
     assert.equal(
       sumSubmittedUrls([
         { submitted: '10', indexed: '999' },
         { submitted: 5, indexed: 1 },
         { submitted: 'nope' },
       ]),
-      15
+      15n
     );
   });
 
-  it('invalid counts become zero', () => {
+  it('preserves unsafe int64 string exactly', () => {
+    const huge = '9007199254740993';
+    assert.equal(parseInt64Count(huge).toString(), huge);
+    assert.equal(formatBigIntCount(parseInt64Count(huge)).replace(/\u00a0/g, ''), huge);
+  });
+
+  it('invalid counts become zero labels', () => {
     const view = toSitemapViewModel({
       path: 'https://example.com/sitemap.xml',
       warnings: 'bad',
       errors: Number.NaN,
       contents: [{ submitted: 'x' }],
     });
-    assert.equal(view.warnings, 0);
-    assert.equal(view.errors, 0);
-    assert.equal(view.submittedUrlCount, 0);
+    assert.equal(view.warningsGreaterThanZero, false);
+    assert.equal(view.errorsGreaterThanZero, false);
+    assert.equal(view.submittedUrlCountLabel, '0');
     assert.equal(view.status, 'success');
   });
 

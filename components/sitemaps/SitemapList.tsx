@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import type { SitemapViewModel } from '@/lib/sitemap-view';
+import { SitemapDate } from './SitemapDate';
 import { SitemapStatusBadge } from './SitemapStatusBadge';
 
 export function SitemapList({
@@ -46,8 +47,12 @@ export function SitemapList({
               <td>{row.submittedUrlCountLabel}</td>
               <td>{row.errorsLabel}</td>
               <td>{row.warningsLabel}</td>
-              <td>{row.lastSubmittedLabel}</td>
-              <td>{row.lastDownloadedLabel}</td>
+              <td>
+                <SitemapDate value={row.lastSubmitted} />
+              </td>
+              <td>
+                <SitemapDate value={row.lastDownloaded} />
+              </td>
               <td>
                 {row.isSitemapsIndex ? (
                   <Link

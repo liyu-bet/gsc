@@ -1,5 +1,7 @@
 import { z } from 'zod';
-import { latestAvailableDate, querySite } from '@/lib/google';
+import { querySite } from '@/lib/google';
+import { GoogleApiError } from '@/lib/google-errors';
+import { addGscCalendarDays, gscCalendarDate } from '@/lib/date-ranges';
 import type { LowPerformanceResponse } from './types';
 
 const searchAnalyticsRowSchema = z.object({
@@ -23,34 +25,70 @@ export function getPerformanceTimeoutMs(): number {
 }
 
 /**
- * Latest calendar day Search Console typically exposes (today − 2 local days).
- * This is NOT a rolling 24h window.
+ * Expected finalized Search Console calendar day for LOW latest_day:
+ * Pacific (America/Los_Angeles) calendar date of `now`, minus 2 calendar days.
+ *
+ * This is a fixed lag contract — not a probe of the last day with data,
+ * not rolling 24h, and not the VPS local timezone.
  */
-export function resolveLatestAvailableDay(now = new Date()): string {
-  void now;
-  return latestAvailableDate();
+export function resolveExpectedFinalizedGscDate(now: Date = new Date()): string {
+  return addGscCalendarDays(gscCalendarDate(now), -2);
 }
 
+/** @deprecated Prefer resolveExpectedFinalizedGscDate — kept as alias for call sites. */
+export function resolveLatestAvailableDay(now: Date = new Date()): string {
+  return resolveExpectedFinalizedGscDate(now);
+}
+
+export function buildLatestDaySearchAnalyticsBody(dataDate: string): Record<string, unknown> {
+  return {
+    startDate: dataDate,
+    endDate: dataDate,
+    dataState: 'final',
+    dimensions: [],
+    rowLimit: 1,
+    aggregationType: 'byProperty',
+  };
+}
+
+function assertFiniteNonNegative(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new GoogleApiError({
+      code: 'INVALID_RESPONSE',
+      safeMessage: `Некорректное значение ${field} в ответе Search Analytics`,
+      retryable: false,
+    });
+  }
+  return value;
+}
+
+/**
+ * Sum property totals from Search Analytics payload.
+ * Does not clamp clicks to impressions — upstream values are preserved when valid.
+ */
 export function sumSearchAnalyticsTotals(payload: unknown): {
   impressions: number;
   clicks: number;
 } {
   const parsed = searchAnalyticsResponseSchema.safeParse(payload);
   if (!parsed.success) {
-    throw new Error('Invalid Search Console API response');
+    throw new GoogleApiError({
+      code: 'INVALID_RESPONSE',
+      safeMessage: 'Некорректный ответ Search Analytics',
+      retryable: false,
+    });
   }
 
   let impressions = 0;
   let clicks = 0;
   for (const row of parsed.data.rows ?? []) {
-    impressions += Number(row.impressions ?? 0);
-    clicks += Number(row.clicks ?? 0);
+    if (row.impressions !== undefined) {
+      impressions += assertFiniteNonNegative(row.impressions, 'impressions');
+    }
+    if (row.clicks !== undefined) {
+      clicks += assertFiniteNonNegative(row.clicks, 'clicks');
+    }
   }
-
-  if (!Number.isFinite(impressions) || impressions < 0) impressions = 0;
-  if (!Number.isFinite(clicks) || clicks < 0) clicks = 0;
-  // Guard impossible click > impression ratios from bad upstream rows.
-  if (clicks > impressions) clicks = impressions;
 
   return { impressions, clicks };
 }
@@ -62,7 +100,7 @@ export async function calculatePropertyPerformance(input: {
   queryFn?: typeof querySite;
   now?: Date;
 }): Promise<LowPerformanceResponse> {
-  const dataDate = resolveLatestAvailableDay(input.now);
+  const dataDate = resolveExpectedFinalizedGscDate(input.now);
   const queryFn = input.queryFn ?? querySite;
   const timeoutMs = getPerformanceTimeoutMs();
   const controller = new AbortController();
@@ -72,13 +110,8 @@ export async function calculatePropertyPerformance(input: {
     const payload = await queryFn(
       input.connectionId,
       input.siteUrl,
-      {
-        startDate: dataDate,
-        endDate: dataDate,
-        rowLimit: 25_000,
-        dataState: 'final',
-      },
-      { signal: controller.signal },
+      buildLatestDaySearchAnalyticsBody(dataDate),
+      { signal: controller.signal }
     );
 
     const totals = sumSearchAnalyticsTotals(payload);

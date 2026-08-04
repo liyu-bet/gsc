@@ -234,12 +234,23 @@ function resolveForDomainProperty(
 
 /**
  * Validate an absolute sitemap index URL for list?sitemapIndex= filter.
+ * Relative paths are rejected — only absolute http/https under property rules.
  */
 export function validateSitemapIndexUrl(
   propertySiteUrl: string,
   rawInput: string
 ): SitemapValidationResult {
-  return resolveSitemapUrl(propertySiteUrl, rawInput, { domainScheme: 'https' });
+  if (rawInput == null || typeof rawInput !== 'string') {
+    return fail('Укажите абсолютный URL индекса карты сайта');
+  }
+  const trimmed = rawInput.trim();
+  if (!trimmed) {
+    return fail('Укажите абсолютный URL индекса карты сайта');
+  }
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return fail('Индекс карты сайта должен быть абсолютным http(s) URL');
+  }
+  return resolveSitemapUrl(propertySiteUrl, trimmed, { domainScheme: 'https' });
 }
 
 /**

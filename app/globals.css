@@ -1876,3 +1876,11 @@ tbody td {
   outline: 2px solid color-mix(in srgb, var(--accent, #2563eb) 50%, transparent);
   outline-offset: 4px;
 }
+
+.sitemap-bulk-warning {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-left: 3px solid #b54708;
+  background: color-mix(in srgb, #b54708 8%, transparent);
+  color: inherit;
+}

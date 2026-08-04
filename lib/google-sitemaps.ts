@@ -1,10 +1,12 @@
 import { googleAuthorizedFetch } from './google-authorized-fetch';
 import { parseGoogleJsonResponse } from './connection-health';
-import { assertCanManageSitemaps } from './google-scopes';
-import { isBlockedConnectionStatus } from './connection-status';
-import { GoogleApiError, reauthRequiredError } from './google-errors';
+import { GoogleApiError } from './google-errors';
 import { prisma } from './prisma';
 import { validateSitemapIndexUrl } from './sitemap-validation';
+import {
+  assertConnectionReadyForSitemapList,
+  assertConnectionReadyForSitemapWrite,
+} from './sitemap-write-guard';
 
 const GSC_BASE = 'https://www.googleapis.com/webmasters/v3';
 
@@ -42,6 +44,14 @@ function sitemapFeedUrl(siteUrl: string, sitemapUrl: string): string {
   return `${GSC_BASE}/sites/${encodeURIComponent(siteUrl)}/sitemaps/${encodeURIComponent(sitemapUrl)}`;
 }
 
+export class SitemapValidationError extends Error {
+  readonly code = 'VALIDATION' as const;
+  constructor(message: string) {
+    super(message);
+    this.name = 'SitemapValidationError';
+  }
+}
+
 export async function listSitemaps(
   connectionId: string,
   siteUrl: string,
@@ -50,15 +60,17 @@ export async function listSitemaps(
     signal?: AbortSignal;
   }
 ): Promise<GoogleSitemapResource[]> {
+  const connection = await prisma.googleConnection.findUnique({
+    where: { id: connectionId },
+    select: { id: true, status: true, scope: true },
+  });
+  assertConnectionReadyForSitemapList(connection);
+
   let sitemapIndex: string | undefined;
   if (options?.sitemapIndex) {
     const validated = validateSitemapIndexUrl(siteUrl, options.sitemapIndex);
     if (!validated.ok) {
-      throw new GoogleApiError({
-        code: 'INVALID_RESPONSE',
-        safeMessage: validated.message,
-        retryable: false,
-      });
+      throw new SitemapValidationError(validated.message);
     }
     sitemapIndex = validated.sitemapUrl;
   }
@@ -95,30 +107,13 @@ export async function submitSitemap(
   const connection = await prisma.googleConnection.findUnique({
     where: { id: connectionId },
   });
-  if (!connection) {
-    throw new GoogleApiError({
-      code: 'CONNECTION_NOT_FOUND',
-      safeMessage: 'Подключение Google не найдено',
-      retryable: false,
-    });
-  }
-
-  if (isBlockedConnectionStatus(connection.status)) {
-    throw reauthRequiredError(
-      connection.status === 'REVOKED'
-        ? 'Доступ отозван — переподключите аккаунт'
-        : 'Требуется повторный вход в аккаунт Google'
-    );
-  }
-
-  assertCanManageSitemaps(connection.scope);
+  assertConnectionReadyForSitemapWrite(connection);
 
   await googleAuthorizedFetch(connectionId, sitemapFeedUrl(siteUrl, sitemapUrl), {
     method: 'PUT',
     signal: options?.signal,
     cache: 'no-store',
     healthMode: 'property-write',
-    // Empty body — do not set Content-Type JSON or attempt to parse response.
   });
 }
 

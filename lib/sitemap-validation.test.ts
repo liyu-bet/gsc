@@ -120,9 +120,12 @@ describe('sitemap-validation domain property', () => {
 });
 
 describe('sitemap-validation helpers', () => {
-  it('validateSitemapIndexUrl requires valid absolute under property', () => {
+  it('validateSitemapIndexUrl requires absolute URL under property', () => {
     const ok = validateSitemapIndexUrl('https://example.com/', 'https://example.com/sitemap-index.xml');
     assert.equal(ok.ok, true);
+    assert.equal(validateSitemapIndexUrl('https://example.com/', 'sitemap-index.xml').ok, false);
+    assert.equal(validateSitemapIndexUrl('https://example.com/', '/sitemap-index.xml').ok, false);
+    assert.equal(validateSitemapIndexUrl('https://example.com/', '../sitemap-index.xml').ok, false);
   });
 
   it('bulk relative path rejects absolute URLs', () => {

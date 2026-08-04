@@ -47,6 +47,10 @@ function formatYmd(year: number, month: number, day: number): string {
   return `${year}-${pad2(month)}-${pad2(day)}`;
 }
 
+export function addGscCalendarDays(ymd: string, deltaDays: number): string {
+  return addCalendarDays(ymd, deltaDays);
+}
+
 function addCalendarDays(ymd: string, deltaDays: number): string {
   const parts = parseYmdParts(ymd);
   if (!parts) {

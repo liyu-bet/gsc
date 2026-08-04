@@ -13,9 +13,11 @@ describe('sitemap submit route contracts', () => {
     assert.match(source, /auth\.getSession\(/);
     assert.match(source, /assertSameOriginRequest/);
     assert.match(source, /gscProperty\.findUnique/);
+    assert.match(source, /assertConnectionReadyForSitemapWrite/);
+    assert.match(source, /findForbiddenSitemapBodyKey/);
+    assert.match(source, /parseStrictDomainScheme/);
     assert.match(source, /status:\s*401/);
     assert.match(source, /status:\s*404/);
-    assert.match(source, /status:\s*409/);
   });
 
   it('does not trust client siteUrl or connectionId', () => {

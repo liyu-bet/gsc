@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as auth from '@/lib/auth';
 import { assertNoSecretsInJson } from '@/lib/connection-health';
-import { isBlockedConnectionStatus } from '@/lib/connection-status';
 import { submitSitemap } from '@/lib/google-sitemaps';
 import { prisma } from '@/lib/prisma';
 import { assertSameOriginRequest } from '@/lib/same-origin';
@@ -9,14 +8,14 @@ import {
   mapSitemapRouteError,
   validationRouteError,
 } from '@/lib/sitemap-route-errors';
+import {
+  findForbiddenSitemapBodyKey,
+  parseStrictDomainScheme,
+} from '@/lib/sitemap-request-validation';
 import { resolveSitemapUrl } from '@/lib/sitemap-validation';
+import { assertConnectionReadyForSitemapWrite } from '@/lib/sitemap-write-guard';
 
 export const dynamic = 'force-dynamic';
-
-type SubmitBody = {
-  sitemap?: unknown;
-  domainScheme?: unknown;
-};
 
 export async function POST(
   request: NextRequest,
@@ -60,32 +59,41 @@ export async function POST(
     );
   }
 
-  if (isBlockedConnectionStatus(property.connection.status)) {
-    return NextResponse.json(
-      {
-        ok: false,
-        code: 'REAUTH_REQUIRED',
-        message: 'Требуется переподключение аккаунта Google',
-      },
-      { status: 409 }
-    );
+  try {
+    assertConnectionReadyForSitemapWrite(property.connection);
+  } catch (error) {
+    const mapped = mapSitemapRouteError(error);
+    return NextResponse.json(mapped.body, { status: mapped.httpStatus });
   }
 
-  let payload: SubmitBody;
+  let payload: Record<string, unknown>;
   try {
-    payload = (await request.json()) as SubmitBody;
+    payload = (await request.json()) as Record<string, unknown>;
   } catch {
     const mapped = validationRouteError('Некорректный JSON запроса');
     return NextResponse.json(mapped.body, { status: mapped.httpStatus });
   }
 
-  const rawSitemap = typeof payload.sitemap === 'string' ? payload.sitemap : '';
-  const domainScheme =
-    payload.domainScheme === 'http' || payload.domainScheme === 'https'
-      ? payload.domainScheme
-      : 'https';
+  const forbidden = findForbiddenSitemapBodyKey(payload);
+  if (forbidden) {
+    const mapped = validationRouteError(`Поле ${forbidden} не допускается`);
+    return NextResponse.json(mapped.body, { status: mapped.httpStatus });
+  }
 
-  const resolved = resolveSitemapUrl(property.siteUrl, rawSitemap, { domainScheme });
+  if (typeof payload.sitemap !== 'string') {
+    const mapped = validationRouteError('Поле sitemap должно быть строкой');
+    return NextResponse.json(mapped.body, { status: mapped.httpStatus });
+  }
+
+  const scheme = parseStrictDomainScheme(payload.domainScheme);
+  if (!scheme.ok) {
+    const mapped = validationRouteError(scheme.message);
+    return NextResponse.json(mapped.body, { status: mapped.httpStatus });
+  }
+
+  const resolved = resolveSitemapUrl(property.siteUrl, payload.sitemap, {
+    domainScheme: scheme.scheme,
+  });
   if (!resolved.ok) {
     const mapped = validationRouteError(resolved.message);
     return NextResponse.json(mapped.body, { status: mapped.httpStatus });

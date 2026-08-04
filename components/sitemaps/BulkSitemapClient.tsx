@@ -1,6 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import {
+  mergeBulkRetryResults,
+  remainingBulkIds,
+  type BulkSitemapOperationSnapshot,
+  type BulkSitemapResultRow,
+} from '@/lib/bulk-sitemap-results';
+import { createOperationLock } from '@/lib/operation-lock';
 import { resolveBulkRelativePath } from '@/lib/sitemap-validation';
 
 export type BulkPropertyRow = {
@@ -11,15 +18,6 @@ export type BulkPropertyRow = {
   accountEmail: string;
   eligible: boolean;
   ineligibleReason: string | null;
-};
-
-type BulkResultRow = {
-  propertyId: string;
-  siteUrl: string;
-  sitemapUrl: string | null;
-  status: 'submitted' | 'failed' | 'skipped';
-  code?: string;
-  message?: string;
 };
 
 const MAX_SELECTION = 250;
@@ -34,9 +32,13 @@ export function BulkSitemapClient({ properties }: { properties: BulkPropertyRow[
   const [pending, startTransition] = useTransition();
   const [stopRequested, setStopRequested] = useState(false);
   const stopRef = useRef(false);
+  const lockRef = useRef(createOperationLock());
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
-  const [results, setResults] = useState<BulkResultRow[]>([]);
+  const [results, setResults] = useState<BulkSitemapResultRow[]>([]);
   const [running, setRunning] = useState(false);
+  const [activeSnapshot, setActiveSnapshot] = useState<BulkSitemapOperationSnapshot | null>(null);
+  const [attemptedIds, setAttemptedIds] = useState<string[]>([]);
+  const [stoppedWithRemaining, setStoppedWithRemaining] = useState(false);
   const summaryRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -74,35 +76,60 @@ export function BulkSitemapClient({ properties }: { properties: BulkPropertyRow[
 
   const invalidPreviewCount = previews.filter((p) => !p.resolved.ok).length;
 
+  const remainingIds = useMemo(() => {
+    if (!activeSnapshot) return [];
+    return remainingBulkIds(activeSnapshot.propertyIds, attemptedIds);
+  }, [activeSnapshot, attemptedIds]);
+
+  function resetConfirmation() {
+    setConfirmed(false);
+  }
+
   function toggle(id: string, eligible: boolean) {
-    if (!eligible) return;
+    if (!eligible || running) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else if (next.size < MAX_SELECTION) next.add(id);
       return next;
     });
+    resetConfirmation();
   }
 
   function selectAllEligible() {
+    if (running) return;
     setSelected(new Set(eligibleIds.slice(0, MAX_SELECTION)));
+    resetConfirmation();
   }
 
   function clearSelection() {
+    if (running) return;
     setSelected(new Set());
-    setConfirmed(false);
+    resetConfirmation();
   }
 
-  async function runBatches(ids: string[]) {
+  async function runBatchesForIds(
+    snapshot: BulkSitemapOperationSnapshot,
+    ids: string[],
+    mode: 'initial' | 'retry' | 'resume',
+    previousResults: BulkSitemapResultRow[]
+  ) {
     setRunning(true);
     setStopRequested(false);
     stopRef.current = false;
+    setStoppedWithRemaining(false);
     setProgress({ completed: 0, total: ids.length });
-    const collected: BulkResultRow[] = [];
+
+    const collected: BulkSitemapResultRow[] = [];
+    const newlyAttempted: string[] = [];
 
     for (let offset = 0; offset < ids.length; offset += BATCH_SIZE) {
-      if (stopRef.current) break;
+      if (stopRef.current) {
+        setStoppedWithRemaining(true);
+        break;
+      }
       const batch = ids.slice(offset, offset + BATCH_SIZE);
+      let batchRows: BulkSitemapResultRow[] = [];
       try {
         const response = await fetch('/api/sitemaps/bulk-submit', {
           method: 'POST',
@@ -112,49 +139,82 @@ export function BulkSitemapClient({ properties }: { properties: BulkPropertyRow[
           },
           body: JSON.stringify({
             propertyIds: batch,
-            relativePath,
-            domainScheme,
+            relativePath: snapshot.relativePath,
+            domainScheme: snapshot.domainScheme,
           }),
         });
         const data = (await response.json()) as {
           ok?: boolean;
           message?: string;
-          results?: BulkResultRow[];
+          results?: BulkSitemapResultRow[];
         };
         if (!response.ok || !data.ok || !Array.isArray(data.results)) {
-          for (const propertyId of batch) {
+          batchRows = batch.map((propertyId) => {
             const property = properties.find((p) => p.id === propertyId);
-            collected.push({
+            return {
               propertyId,
               siteUrl: property?.siteUrl || '',
               sitemapUrl: null,
-              status: 'failed',
+              status: 'failed' as const,
               code: 'BATCH_ERROR',
               message: data.message || 'Ошибка batch-запроса',
-            });
-          }
+            };
+          });
         } else {
-          collected.push(...data.results);
+          batchRows = data.results;
         }
       } catch {
-        for (const propertyId of batch) {
+        batchRows = batch.map((propertyId) => {
           const property = properties.find((p) => p.id === propertyId);
-          collected.push({
+          return {
             propertyId,
             siteUrl: property?.siteUrl || '',
             sitemapUrl: null,
-            status: 'failed',
+            status: 'failed' as const,
             code: 'NETWORK',
             message: 'Сетевая ошибка batch-запроса',
-          });
-        }
+          };
+        });
       }
-      setResults([...collected]);
-      setProgress({ completed: collected.length, total: ids.length });
+
+      collected.push(...batchRows);
+      newlyAttempted.push(...batch);
+      setAttemptedIds((prev) => [...new Set([...prev, ...batch])]);
+
+      if (mode === 'initial') {
+        setResults([...collected]);
+      } else {
+        setResults(mergeBulkRetryResults(previousResults, collected, snapshot.propertyIds));
+      }
+      setProgress({ completed: newlyAttempted.length, total: ids.length });
     }
 
     setRunning(false);
+    setConfirmed(false);
     queueMicrotask(() => summaryRef.current?.focus());
+  }
+
+  function startLocked(
+    mode: 'initial' | 'retry' | 'resume',
+    snapshot: BulkSitemapOperationSnapshot,
+    ids: string[]
+  ) {
+    if (ids.length === 0) return;
+    if (!lockRef.current.tryAcquire()) return;
+    const previousResults = mode === 'initial' ? [] : results;
+
+    startTransition(async () => {
+      try {
+        setActiveSnapshot(snapshot);
+        if (mode === 'initial') {
+          setResults([]);
+          setAttemptedIds([]);
+        }
+        await runBatchesForIds(snapshot, ids, mode, previousResults);
+      } finally {
+        lockRef.current.release();
+      }
+    });
   }
 
   function onSubmit(event: React.FormEvent) {
@@ -163,18 +223,24 @@ export function BulkSitemapClient({ properties }: { properties: BulkPropertyRow[
       return;
     }
     const validIds = previews.filter((p) => p.resolved.ok).map((p) => p.property.id);
-    startTransition(async () => {
-      setResults([]);
-      await runBatches(validIds);
-    });
+    const snapshot: BulkSitemapOperationSnapshot = {
+      propertyIds: validIds,
+      relativePath,
+      domainScheme,
+    };
+    startLocked('initial', snapshot, validIds);
   }
 
   function retryFailed() {
+    if (!activeSnapshot || running) return;
     const failedIds = results.filter((r) => r.status === 'failed').map((r) => r.propertyId);
-    if (failedIds.length === 0 || running) return;
-    startTransition(async () => {
-      await runBatches(failedIds);
-    });
+    startLocked('retry', activeSnapshot, failedIds);
+  }
+
+  function resumeRemaining() {
+    if (!activeSnapshot || running) return;
+    const remaining = remainingBulkIds(activeSnapshot.propertyIds, attemptedIds);
+    startLocked('resume', activeSnapshot, remaining);
   }
 
   const submitted = results.filter((r) => r.status === 'submitted').length;
@@ -183,6 +249,10 @@ export function BulkSitemapClient({ properties }: { properties: BulkPropertyRow[
 
   return (
     <div className="bulk-sitemaps">
+      <p className="sitemap-bulk-warning" role="note">
+        Начните с 2–3 тестовых ресурсов. Массовая отправка может расходовать квоту Google API.
+      </p>
+
       <form className="panel site-detail-panel" onSubmit={onSubmit}>
         <div className="sitemap-submit-grid">
           <label className="sitemap-field">
@@ -190,7 +260,10 @@ export function BulkSitemapClient({ properties }: { properties: BulkPropertyRow[
             <input
               type="text"
               value={relativePath}
-              onChange={(e) => setRelativePath(e.target.value)}
+              onChange={(e) => {
+                setRelativePath(e.target.value);
+                resetConfirmation();
+              }}
               disabled={running}
               autoComplete="off"
               spellCheck={false}
@@ -200,7 +273,10 @@ export function BulkSitemapClient({ properties }: { properties: BulkPropertyRow[
             <span>Схема для domain-ресурсов</span>
             <select
               value={domainScheme}
-              onChange={(e) => setDomainScheme(e.target.value === 'http' ? 'http' : 'https')}
+              onChange={(e) => {
+                setDomainScheme(e.target.value === 'http' ? 'http' : 'https');
+                resetConfirmation();
+              }}
               disabled={running}
             >
               <option value="https">https</option>
@@ -332,15 +408,22 @@ export function BulkSitemapClient({ properties }: { properties: BulkPropertyRow[
       </form>
 
       <section className="panel site-detail-panel" aria-live="polite">
-        <div
-          ref={summaryRef}
-          tabIndex={-1}
-          className="bulk-summary"
-        >
+        <div ref={summaryRef} tabIndex={-1} className="bulk-summary">
           <h3>Прогресс и результаты</h3>
+          {activeSnapshot ? (
+            <p className="muted">
+              Snapshot: path=<code>{activeSnapshot.relativePath}</code>, scheme=
+              {activeSnapshot.domainScheme}, properties={activeSnapshot.propertyIds.length}
+            </p>
+          ) : null}
           <p>
             Выполнено: {progress.completed} / {progress.total || selectedEligible.length || 0}
           </p>
+          {stoppedWithRemaining ? (
+            <p className="sitemap-notice-error">
+              Отправка остановлена. Не обработано: {remainingIds.length}
+            </p>
+          ) : null}
           {results.length > 0 ? (
             <p>
               Успешно: {submitted} · Ошибки: {failed} · Пропущено: {skipped}
@@ -350,9 +433,15 @@ export function BulkSitemapClient({ properties }: { properties: BulkPropertyRow[
           )}
         </div>
 
-        {failed > 0 && !running ? (
+        {!running && failed > 0 ? (
           <button type="button" className="button ghost" onClick={retryFailed}>
             Повторить только failed
+          </button>
+        ) : null}
+
+        {!running && stoppedWithRemaining && remainingIds.length > 0 ? (
+          <button type="button" className="button ghost" onClick={resumeRemaining}>
+            Продолжить оставшиеся
           </button>
         ) : null}
 

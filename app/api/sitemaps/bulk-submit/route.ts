@@ -1,25 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as auth from '@/lib/auth';
 import { assertNoSecretsInJson } from '@/lib/connection-health';
-import { isBlockedConnectionStatus } from '@/lib/connection-status';
 import { mapWithConcurrency } from '@/lib/concurrency';
 import { submitSitemap } from '@/lib/google-sitemaps';
-import { getGoogleScopeCapabilities } from '@/lib/google-scopes';
 import { prisma } from '@/lib/prisma';
 import { assertSameOriginRequest } from '@/lib/same-origin';
 import { mapSitemapRouteError, validationRouteError } from '@/lib/sitemap-route-errors';
+import {
+  findForbiddenSitemapBodyKey,
+  parseStrictDomainScheme,
+  parseStrictPropertyIdArray,
+} from '@/lib/sitemap-request-validation';
 import { resolveBulkRelativePath } from '@/lib/sitemap-validation';
+import { assertConnectionReadyForSitemapWrite } from '@/lib/sitemap-write-guard';
 
 export const dynamic = 'force-dynamic';
 
 const MAX_BATCH = 25;
 const CONCURRENCY = 3;
-
-type BulkBody = {
-  propertyIds?: unknown;
-  relativePath?: unknown;
-  domainScheme?: unknown;
-};
 
 type BulkItemResult = {
   propertyId: string;
@@ -47,36 +45,39 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  let payload: BulkBody;
+  let payload: Record<string, unknown>;
   try {
-    payload = (await request.json()) as BulkBody;
+    payload = (await request.json()) as Record<string, unknown>;
   } catch {
     const mapped = validationRouteError('Некорректный JSON запроса');
     return NextResponse.json(mapped.body, { status: mapped.httpStatus });
   }
 
-  if (!Array.isArray(payload.propertyIds)) {
-    const mapped = validationRouteError('Укажите список propertyIds');
+  const forbidden = findForbiddenSitemapBodyKey(payload);
+  if (forbidden) {
+    const mapped = validationRouteError(`Поле ${forbidden} не допускается`);
     return NextResponse.json(mapped.body, { status: mapped.httpStatus });
   }
 
-  const rawIds = payload.propertyIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
-  const propertyIds = [...new Set(rawIds.map((id) => id.trim()))];
-  if (propertyIds.length === 0) {
+  const idsParsed = parseStrictPropertyIdArray(payload.propertyIds);
+  if (!idsParsed.ok) {
+    const mapped = validationRouteError(idsParsed.message);
+    return NextResponse.json(mapped.body, { status: mapped.httpStatus });
+  }
+  if (idsParsed.ids.length === 0) {
     const mapped = validationRouteError('Список propertyIds пуст');
     return NextResponse.json(mapped.body, { status: mapped.httpStatus });
   }
-  if (propertyIds.length > MAX_BATCH) {
+  if (idsParsed.ids.length > MAX_BATCH) {
     const mapped = validationRouteError(`Максимум ${MAX_BATCH} ресурсов в одном batch`);
     return NextResponse.json(mapped.body, { status: mapped.httpStatus });
   }
 
-  const relativePath = typeof payload.relativePath === 'string' ? payload.relativePath : '';
-  const domainScheme =
-    payload.domainScheme === 'http' || payload.domainScheme === 'https'
-      ? payload.domainScheme
-      : 'https';
-
+  if (typeof payload.relativePath !== 'string') {
+    const mapped = validationRouteError('relativePath должен быть строкой');
+    return NextResponse.json(mapped.body, { status: mapped.httpStatus });
+  }
+  const relativePath = payload.relativePath;
   if (!relativePath.trim()) {
     const mapped = validationRouteError('Укажите относительный путь карты сайта');
     return NextResponse.json(mapped.body, { status: mapped.httpStatus });
@@ -88,6 +89,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(mapped.body, { status: mapped.httpStatus });
   }
 
+  const scheme = parseStrictDomainScheme(payload.domainScheme);
+  if (!scheme.ok) {
+    const mapped = validationRouteError(scheme.message);
+    return NextResponse.json(mapped.body, { status: mapped.httpStatus });
+  }
+
+  const propertyIds = idsParsed.ids;
   const properties = await prisma.gscProperty.findMany({
     where: { id: { in: propertyIds } },
     include: {
@@ -130,41 +138,29 @@ export async function POST(request: NextRequest) {
       };
     }
 
-    if (isBlockedConnectionStatus(property.connection.status)) {
+    try {
+      assertConnectionReadyForSitemapWrite(property.connection);
+    } catch (error) {
+      const mapped = mapSitemapRouteError(error);
+      const status =
+        mapped.body.code === 'INSUFFICIENT_SCOPE' ||
+        mapped.body.code === 'REAUTH_REQUIRED' ||
+        mapped.body.code === 'CONNECTION_ERROR'
+          ? ('skipped' as const)
+          : ('failed' as const);
       return {
         propertyId,
         siteUrl: property.siteUrl,
         sitemapUrl: null,
-        status: 'skipped' as const,
-        code: 'REAUTH_REQUIRED',
-        message: 'Требуется переподключение аккаунта Google',
+        status,
+        code: mapped.body.code,
+        message: mapped.body.message,
       };
     }
 
-    if (property.connection.status === 'ERROR') {
-      return {
-        propertyId,
-        siteUrl: property.siteUrl,
-        sitemapUrl: null,
-        status: 'skipped' as const,
-        code: 'CONNECTION_ERROR',
-        message: 'Временная ошибка подключения Google',
-      };
-    }
-
-    const caps = getGoogleScopeCapabilities(property.connection.scope);
-    if (!caps.canManageSitemaps) {
-      return {
-        propertyId,
-        siteUrl: property.siteUrl,
-        sitemapUrl: null,
-        status: 'skipped' as const,
-        code: 'INSUFFICIENT_SCOPE',
-        message: 'Недостаточно разрешений для управления sitemap',
-      };
-    }
-
-    const resolved = resolveBulkRelativePath(property.siteUrl, relativePath, { domainScheme });
+    const resolved = resolveBulkRelativePath(property.siteUrl, relativePath, {
+      domainScheme: scheme.scheme,
+    });
     if (!resolved.ok) {
       return {
         propertyId,
