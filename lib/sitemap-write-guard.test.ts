@@ -62,13 +62,61 @@ describe('assertConnectionReadyForSitemapWrite', () => {
     );
   });
 
-  it('list requires ACTIVE', () => {
-    assert.throws(
-      () => assertConnectionReadyForSitemapList({ status: 'ERROR', scope: null }),
-      (error: unknown) => error instanceof GoogleApiError && error.code === 'CONNECTION_ERROR'
+  it('list requires ACTIVE and allows readonly scope', () => {
+    assert.doesNotThrow(() =>
+      assertConnectionReadyForSitemapList({
+        status: 'ACTIVE',
+        scope: 'openid https://www.googleapis.com/auth/webmasters.readonly',
+      })
     );
     assert.doesNotThrow(() =>
       assertConnectionReadyForSitemapList({ status: 'ACTIVE', scope: null })
+    );
+  });
+
+  it('list classifies REVOKED with REAUTH_REQUIRED revoked message', () => {
+    assert.throws(
+      () => assertConnectionReadyForSitemapList({ status: 'REVOKED', scope: null }),
+      (error: unknown) =>
+        error instanceof GoogleApiError &&
+        error.code === 'REAUTH_REQUIRED' &&
+        error.safeMessage === 'Доступ отозван — переподключите аккаунт'
+    );
+  });
+
+  it('list classifies REAUTH_REQUIRED with login message', () => {
+    assert.throws(
+      () => assertConnectionReadyForSitemapList({ status: 'REAUTH_REQUIRED', scope: null }),
+      (error: unknown) =>
+        error instanceof GoogleApiError &&
+        error.code === 'REAUTH_REQUIRED' &&
+        error.safeMessage === 'Требуется повторный вход в аккаунт Google'
+    );
+  });
+
+  it('list classifies ERROR with CONNECTION_ERROR load message', () => {
+    assert.throws(
+      () => assertConnectionReadyForSitemapList({ status: 'ERROR', scope: null }),
+      (error: unknown) =>
+        error instanceof GoogleApiError &&
+        error.code === 'CONNECTION_ERROR' &&
+        error.safeMessage ===
+          'Перед загрузкой карт сайта повторите проверку подключения Google'
+    );
+  });
+
+  it('list classifies unknown inactive status as CONNECTION_ERROR', () => {
+    assert.throws(
+      () =>
+        assertConnectionReadyForSitemapList({
+          status: 'PENDING' as never,
+          scope: null,
+        }),
+      (error: unknown) =>
+        error instanceof GoogleApiError &&
+        error.code === 'CONNECTION_ERROR' &&
+        error.safeMessage ===
+          'Перед загрузкой карт сайта повторите проверку подключения Google'
     );
   });
 });

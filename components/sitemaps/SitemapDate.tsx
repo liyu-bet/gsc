@@ -1,18 +1,40 @@
 'use client';
 
-import { formatSitemapDate } from '@/lib/sitemap-view';
+import { useEffect, useState } from 'react';
+import { getSitemapDateDisplayState } from '@/lib/sitemap-date-display';
 
 export function SitemapDate({
   value,
   timeZone,
 }: {
   value: string | null | undefined;
-  /** Optional — tests only. Browser uses local timezone when omitted. */
+  /** Optional — tests / forced zone. Browser local zone when omitted after mount. */
   timeZone?: string;
 }) {
-  const label = formatSitemapDate(value, timeZone);
-  if (!value || label === '—') {
-    return <span>—</span>;
-  }
-  return <span title={value}>{label}</span>;
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const display = getSitemapDateDisplayState({
+    value,
+    mounted,
+    timeZone,
+  });
+
+  return (
+    <span
+      title={display.title ?? undefined}
+      aria-label={
+        display.ready
+          ? display.text === '—'
+            ? 'Дата недоступна'
+            : `Дата: ${display.text}`
+          : 'Дата загружается'
+      }
+    >
+      {display.text}
+    </span>
+  );
 }

@@ -69,11 +69,39 @@ export function assertConnectionReadyForSitemapList(
       retryable: false,
     });
   }
-  if (connection.status !== 'ACTIVE') {
+
+  if (connection.status === 'ACTIVE') {
+    // Readonly and full scope both allow listing sitemaps.
+    return;
+  }
+
+  if (connection.status === 'REVOKED') {
     throw new GoogleApiError({
-      code: 'CONNECTION_ERROR',
-      safeMessage: 'Список карт сайта доступен только для активного подключения Google',
+      code: 'REAUTH_REQUIRED',
+      safeMessage: 'Доступ отозван — переподключите аккаунт',
       retryable: false,
     });
   }
+
+  if (connection.status === 'REAUTH_REQUIRED') {
+    throw new GoogleApiError({
+      code: 'REAUTH_REQUIRED',
+      safeMessage: 'Требуется повторный вход в аккаунт Google',
+      retryable: false,
+    });
+  }
+
+  if (connection.status === 'ERROR') {
+    throw new GoogleApiError({
+      code: 'CONNECTION_ERROR',
+      safeMessage: 'Перед загрузкой карт сайта повторите проверку подключения Google',
+      retryable: false,
+    });
+  }
+
+  throw new GoogleApiError({
+    code: 'CONNECTION_ERROR',
+    safeMessage: 'Перед загрузкой карт сайта повторите проверку подключения Google',
+    retryable: false,
+  });
 }
